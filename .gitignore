@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+ios/*.xcodeproj/
+ios/build/
+.DS_Store

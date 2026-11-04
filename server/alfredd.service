@@ -1,0 +1,17 @@
+# /etc/systemd/system/alfredd.service
+[Unit]
+Description=alfredd - Alfred personal-assistant backend (wg0:3341)
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/root/projects/alfred/server
+Environment=HOME=/root
+Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/root/projects/alfred/server/.venv/bin/python -m uvicorn alfredd.main:app --host 10.66.66.1 --port 3341
+Restart=always
+RestartSec=5
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
