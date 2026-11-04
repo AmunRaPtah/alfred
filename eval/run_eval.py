@@ -30,6 +30,10 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tasks as tasks_mod  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server"))
+# Grade what the app shows: alfredd strips leaked reasoning before replies reach the phone.
+from alfredd.adapters import strip_leaked_reasoning  # noqa: E402
+
 REPO = "/root/projects/llm-burst"
 KAGGLE_DIR = os.path.join(REPO, "kaggle")
 ALFRED_SYS_DEFAULT = "/root/projects/alfred/server/alfred-system.md"
@@ -128,7 +132,7 @@ def run_one_task(task, backend_cfg, timeout_override=None):
         passed, detail = False, "timed out before producing a result"
     else:
         try:
-            passed, detail = task["check"](scratch, raw_text)
+            passed, detail = task["check"](scratch, strip_leaked_reasoning(raw_text))
         except Exception as e:
             passed, detail = False, f"checker raised: {e}"
 
