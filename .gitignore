@@ -5,3 +5,5 @@ __pycache__/
 ios/*.xcodeproj/
 ios/build/
 .DS_Store
+.resume.log
+HANDOFF-*.md

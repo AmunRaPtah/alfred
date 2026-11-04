@@ -1,0 +1,12 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1
+fastapi>=0.110
+uvicorn[standard]>=0.30
+pydantic>=2
+numpy>=2
+soundfile>=0.12
+huggingface_hub>=0.25
+loguru
+kokoro==0.9.4
+misaki[en]>=0.9.4
+pocket-tts

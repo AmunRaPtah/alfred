@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Alfred TTS (Kokoro-82M + Kyutai Pocket-TTS) on a free Kaggle CPU session,
+reachable on this box at 127.0.0.1:8195.
+
+    alfred-tts-kaggle start [--wait]   push the kernel (no accelerator); --wait polls /health
+    alfred-tts-kaggle stop             tell the session to exit, frees the CPU session slot
+    alfred-tts-kaggle status           kernel state + tunnel health
+    alfred-tts-kaggle output [D]       fetch the finished/cancelled session's log into D
+    alfred-tts-kaggle dry-run D        write the kernel source + kernel-metadata.json into D; no push
+
+Tunnel: reuses the kagglefwd login and key dataset of the T4/TPU tiers (see
+/root/projects/llm-burst/kaggle/box-setup.sh), box port 8195 (8190 T4, 8191
+FlareSolverr, 8192 GLM TPU, 8193 qwen122 TPU), forced-command argument
+"alfred-tts" -> its own stop file /var/lib/kaggle-glm/stop-alfred-tts.
+
+No accelerator is requested: both TTS engines run on CPU. This is a
+separate Kaggle kernel from llm-burst-qwen122-tpu (TPU) and alfred-voice-ab
+(a one-shot GPU batch script, not a server) and does not touch either.
+
+X-Alfred-Key: generated once and cached at KEY_FILE (chmod 600), also
+written into /root/.alfred/tts.json by `start` so alfred-tts (the CLI
+wrapper) can use it. Never printed.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+TTS_DIR = HERE.parent
+KERNEL = HERE / "serve_tts.py"
+
+USER = "eniolaolutogun"
+SLUG = "alfred-tts-kaggle-serve"
+BOX = "178.18.250.254"
+PORT = 8195
+GATE_ARG = "alfred-tts"
+STATE = Path("/var/lib/kaggle-glm")
+KEY_FILE = Path("/root/.config/kaggle-glm/alfred-tts.key")
+TUNNEL_DATASET = f"{USER}/llm-burst-kaggle-glm"   # kaggle-glm-key + kaggle-glm-known-hosts
+IDLE_MIN = int(os.environ.get("ALFRED_TTS_KAGGLE_IDLE_MIN", "60"))
+WAIT_MIN = int(os.environ.get("ALFRED_TTS_KAGGLE_WAIT_MIN", "20"))
+TTS_JSON = Path("/root/.alfred/tts.json")
+
+
+def kaggle(*args):
+    return subprocess.run(["kaggle", *args], capture_output=True, text=True)
+
+
+def api_key():
+    if not KEY_FILE.exists():
+        KEY_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd = os.open(KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write("atts-" + os.urandom(20).hex() + "\n")
+    return KEY_FILE.read_text().strip()
+
+
+def kstatus():
+    r = kaggle("kernels", "status", f"{USER}/{SLUG}")
+    m = re.search(r"queued|running|complete|error|cancel\w*", ((r.stdout or "") + (r.stderr or "")).lower())
+    return m.group(0) if m else "?"
+
+
+def healthy():
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/health", timeout=5) as r:
+            return json.loads(r.read()).get("ok") is True
+    except Exception:
+        return False
+
+
+def build(key):
+    """(kernel source, kernel-metadata dict). Pure apart from reading the source files."""
+    cfg = {
+        "api_key": key, "idle_min": IDLE_MIN,
+        "ssh_tunnel": {"box": BOX, "user": "kagglefwd", "remote_port": PORT, "command": GATE_ARG,
+                       "key_file": "kaggle-glm-key", "known_hosts_file": "kaggle-glm-known-hosts"},
+    }
+    src = KERNEL.read_text()
+    app_src = (TTS_DIR / "app.py").read_text()
+    for pat, val in ((r"^CFG = None  # __LAUNCHER_CONFIG__.*$", f"CFG = {cfg!r}"),
+                     (r'^APP_SRC = ""  # __APP_SRC__.*$', f"APP_SRC = {app_src!r}")):
+        src, n = re.subn(pat, lambda _: val, src, count=1, flags=re.M)
+        assert n == 1, pat
+    meta = {
+        "id": f"{USER}/{SLUG}", "title": SLUG, "code_file": KERNEL.name, "language": "python",
+        "kernel_type": "script", "is_private": "true", "enable_gpu": "false", "enable_tpu": "false",
+        "enable_internet": "true", "dataset_sources": [TUNNEL_DATASET],
+        "competition_sources": [], "kernel_sources": [], "model_sources": [],
+    }
+    return src, meta
+
+
+def write_kernel_dir(d, key):
+    d = Path(d)
+    src, meta = build(key)
+    (d / KERNEL.name).write_text(src)
+    (d / "kernel-metadata.json").write_text(json.dumps(meta, indent=1))
+    return d
+
+
+def write_tts_json(key):
+    TTS_JSON.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    data = {
+        "url": f"http://127.0.0.1:{PORT}",
+        "key": key,
+        "engines": ["kokoro", "pocket"],
+        "default_engine": "kokoro",
+        "default_voice": "bm_george",
+        "host": "kaggle-cpu",
+    }
+    fd = os.open(TTS_JSON, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=1)
+        f.write("\n")
+
+
+def wait_up():
+    t = time.time()
+    while time.time() - t < WAIT_MIN * 60:
+        if healthy():
+            print(f"UP: 127.0.0.1:{PORT} after {int(time.time() - t) // 60} min")
+            return 0
+        st = kstatus()
+        if st not in ("queued", "running", "?"):
+            print(f"kernel ended ({st}) before the server came up; see `alfred-tts-kaggle output`")
+            return 1
+        print(f"  {int(time.time() - t) // 60} min: kernel {st}, tunnel down", flush=True)
+        time.sleep(20)
+    print(f"not up after {WAIT_MIN} min")
+    return 1
+
+
+def start(argv):
+    wait = "--wait" in argv
+    if healthy():
+        print(f"already up on 127.0.0.1:{PORT}")
+        write_tts_json(api_key())
+        return
+    st = kstatus()
+    if st in ("queued", "running"):
+        sys.exit(f"{SLUG} is already {st}; waiting on the tunnel instead of re-pushing" if not wait else wait_up())
+    (STATE / f"stop-{GATE_ARG}").unlink(missing_ok=True)
+    key = api_key()
+    with tempfile.TemporaryDirectory() as td:
+        os.chmod(td, 0o700)
+        write_kernel_dir(td, key)
+        r = subprocess.run(["kaggle", "kernels", "push", "-p", td], capture_output=True, text=True)
+    print(((r.stdout or "") + (r.stderr or "")).strip())
+    ok = r.returncode == 0 and "error" not in (r.stdout or "").lower()
+    if ok and os.access(STATE, os.W_OK):
+        (STATE / "alfred-tts-pushed").write_text(time.strftime("%Y-%m-%dT%H:%M:%S%z") + "\n")
+    if ok:
+        write_tts_json(key)
+    if ok and wait:
+        sys.exit(wait_up())
+    sys.exit(0 if ok else 1)
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if cmd == "start":
+        start(sys.argv[2:])
+    elif cmd == "stop":
+        (STATE / f"stop-{GATE_ARG}").touch()
+        print("stop requested; the session exits within ~2 min if connected (else: kaggle kernels cancel)")
+    elif cmd == "status":
+        print(f"kernel {USER}/{SLUG}: {kstatus()}")
+        print(f"tunnel: UP 127.0.0.1:{PORT}" if healthy() else "tunnel: down")
+        for f in (f"last-connect-{GATE_ARG}", f"stop-{GATE_ARG}", "alfred-tts-pushed"):
+            p = STATE / f
+            if p.exists():
+                print(f"{f}: {p.read_text().strip() or 'set'}")
+    elif cmd == "output":
+        d = sys.argv[2] if len(sys.argv) > 2 else "/tmp/alfred-tts-kaggle-out"
+        subprocess.run(["kaggle", "kernels", "output", f"{USER}/{SLUG}", "-p", d, "--file-pattern", r"\.(log|txt)$"])
+    elif cmd == "dry-run":
+        if len(sys.argv) < 3:
+            sys.exit("usage: alfred-tts-kaggle dry-run DIR")
+        d = Path(sys.argv[2])
+        d.mkdir(parents=True, exist_ok=True)
+        write_kernel_dir(d, "DRY-RUN-PLACEHOLDER")
+        print(f"wrote {d / KERNEL.name} and {d / 'kernel-metadata.json'} (not pushed)")
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
