@@ -308,7 +308,7 @@ private struct VoiceSection: View {
     @State private var voices = VoiceSettings.availableVoices()
 
     var body: some View {
-        Section("Voice") {
+        Section {
             Picker("Voice", selection: $settings.voiceIdentifier) {
                 ForEach(voices, id: \.identifier) { v in
                     Text(voiceLabel(v)).tag(Optional(v.identifier))
@@ -319,6 +319,8 @@ private struct VoiceSection: View {
                 Slider(value: $settings.rate, in: 0.3...0.6)
             }
             Toggle("Resume listening automatically", isOn: $settings.autoListen)
+        } header: {
+            Text("Voice")
         } footer: {
             Text("Enhanced and premium voices, where installed, are listed first.")
         }
