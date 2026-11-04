@@ -10,6 +10,7 @@ adapters.py) therefore covers it; see helmd's adapters.py docstring for the
 shapes this was verified against on 2026-10-18.
 """
 import base64
+import re
 import json
 import mimetypes
 import os
@@ -159,3 +160,22 @@ def known_commands(meta):
 
 
 LONG_LIVED = {"alfred"}
+
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S)
+
+
+def strip_leaked_reasoning(text: str) -> str:
+    """Drop chain-of-thought the model let into its reply.
+
+    Qwen's template opens `<think>` in the prompt, so when llama-server's
+    reasoning parser misses it the reply arrives as `reasoning</think>answer`
+    with no opening tag (seen in the 2026-11-04 eval). Keep only what follows
+    the last closing tag; whole `<think>...</think>` blocks go too.
+    """
+    if "think>" not in text:
+        return text
+    text = _THINK_BLOCK.sub("", text)
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    return text.strip()

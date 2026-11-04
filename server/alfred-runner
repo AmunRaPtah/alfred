@@ -81,6 +81,8 @@ class Runner:
         self.should_exit = threading.Event()
 
     def emit(self, ev):
+        if ev.get("type") == "assistant" and isinstance(ev.get("text"), str):
+            ev = {**ev, "text": adapters.strip_leaked_reasoning(ev["text"])}
         full = sessionio.append_event(self.sid, ev)
         transcript_print(full)
 
