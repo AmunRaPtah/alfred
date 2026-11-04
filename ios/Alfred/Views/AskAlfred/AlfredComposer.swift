@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -8,6 +9,8 @@ struct AlfredComposer: View {
     @Bindable var model: ChatModel
 
     @State private var showFiles = false
+    @State private var showPhotos = false
+    @State private var photoItems: [PhotosPickerItem] = []
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -24,8 +27,9 @@ struct AlfredComposer: View {
                 }
             }
             HStack(alignment: .bottom, spacing: 8) {
-                Button {
-                    showFiles = true
+                Menu {
+                    Button { showPhotos = true } label: { Label("Photos", systemImage: "photo.on.rectangle") }
+                    Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
                 } label: {
                     Image(systemName: "paperclip")
                         .font(.system(size: 15, weight: .semibold))
@@ -34,7 +38,7 @@ struct AlfredComposer: View {
                         .background(AlfredPalette.slate.opacity(0.7), in: Circle())
                 }
                 .disabled(model.isExited)
-                .accessibilityLabel("Attach a file")
+                .accessibilityLabel("Attach")
 
                 TextField("", text: $model.draft, prompt: Text(placeholder).foregroundStyle(AlfredPalette.mist), axis: .vertical)
                     .font(AlfredFont.body)
@@ -55,6 +59,12 @@ struct AlfredComposer: View {
         .padding(.top, 8)
         .padding(.bottom, 8)
         .background(AlfredPalette.midnight.opacity(0.9))
+        .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: 4, matching: .images)
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            photoItems = []
+            for item in items { Task { await upload(item) } }
+        }
         .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls):
@@ -139,6 +149,35 @@ struct AlfredComposer: View {
         }
         .disabled(!model.canSend)
         .accessibilityLabel(model.isRunning ? "Add to queue" : "Send")
+    }
+
+    private func upload(_ item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self) else {
+            model.banner = "Couldn't load that photo."
+            return
+        }
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        if let jpeg = ImageEncoding.jpeg(from: data) {
+            await model.upload(data: jpeg, filename: "photo-\(stamp).jpg", mimeType: "image/jpeg")
+        } else {
+            await model.upload(data: data, filename: "file-\(stamp)", mimeType: "application/octet-stream")
+        }
+    }
+}
+
+enum ImageEncoding {
+    /// Re-encode (HEIC etc.) as JPEG, capped at 2048px on the long side.
+    static func jpeg(from data: Data, maxSide: CGFloat = 2048) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let size = image.size
+        let scale = min(1, maxSide / max(size.width, size.height, 1))
+        let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let resized = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+        return resized.jpegData(compressionQuality: 0.85)
     }
 }
 
