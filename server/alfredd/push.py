@@ -1,9 +1,13 @@
-"""APNs push for Alfred: token-based (ES256 JWT) auth over HTTP/2, per
-PROTOCOL.md. A clean no-op (`configured: false`) whenever
-~/.alfred/apns.json is absent -- no APNs dependency is required to run
-alfredd without push.
+"""Push for Alfred. Two channels:
 
-apns.json: {"team_id","key_id","p8_path","topic","env":"production"|"sandbox"}
+- APNs: token-based (ES256 JWT) auth over HTTP/2, per PROTOCOL.md. A clean
+  no-op (`configured: false`) whenever ~/.alfred/apns.json is absent -- no
+  APNs dependency is required to run alfredd without push.
+  apns.json: {"team_id","key_id","p8_path","topic","env":"production"|"sandbox"}
+
+- Telegram: fallback channel used whenever APNs is not configured. Sends via
+  the Bot API (`sendMessage`) to one fixed chat.
+  telegram.json: {"bot_token","chat_id"}
 """
 import json
 import time
@@ -53,12 +57,44 @@ def _build_jwt(cfg: dict) -> str:
     return token
 
 
-def status() -> dict:
-    cfg = load_apns_config()
+def load_telegram_config() -> Optional[dict]:
+    if not config.TELEGRAM_CONFIG_FILE.exists():
+        return None
+    try:
+        cfg = json.loads(config.TELEGRAM_CONFIG_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+    if not cfg.get("bot_token") or not cfg.get("chat_id"):
+        return None
+    return cfg
+
+
+def _send_telegram(title: str, body: str) -> bool:
+    cfg = load_telegram_config()
     if not cfg:
-        return {"configured": False, "devices": db.count_devices()}
-    return {"configured": True, "team_id": cfg["team_id"], "key_id": cfg["key_id"],
-            "topic": cfg["topic"], "devices": db.count_devices()}
+        return False
+    import httpx
+
+    text = f"*{title}*\n{body}" if title else body
+    url = f"https://api.telegram.org/bot{cfg['bot_token']}/sendMessage"
+    try:
+        r = httpx.post(url, json={"chat_id": cfg["chat_id"], "text": text,
+                                   "parse_mode": "Markdown"}, timeout=10)
+        return r.status_code == 200 and r.json().get("ok", False)
+    except Exception:
+        return False
+
+
+def status() -> dict:
+    apns_cfg = load_apns_config()
+    tg_cfg = load_telegram_config()
+    if apns_cfg:
+        return {"configured": True, "channel": "apns", "team_id": apns_cfg["team_id"],
+                "key_id": apns_cfg["key_id"], "topic": apns_cfg["topic"],
+                "devices": db.count_devices()}
+    if tg_cfg:
+        return {"configured": True, "channel": "telegram", "devices": db.count_devices()}
+    return {"configured": False, "channel": None, "devices": db.count_devices()}
 
 
 def _send_one(client, cfg: dict, device_token: str, jwt_token: str, payload: dict) -> tuple:
@@ -87,14 +123,18 @@ def _send_one(client, cfg: dict, device_token: str, jwt_token: str, payload: dic
 
 
 def notify(title: str, body: str, session_id: Optional[str] = None) -> dict:
-    """Push `title`/`body` to every registered device. No-op with
-    configured:false when ~/.alfred/apns.json is absent."""
+    """Push `title`/`body` to every registered device via APNs if configured,
+    else fall back to Telegram. No-op with configured:false when neither
+    ~/.alfred/apns.json nor ~/.alfred/telegram.json is present."""
     cfg = load_apns_config()
-    devices = db.list_devices()
     if not cfg:
-        return {"sent": 0, "failed": 0, "configured": False}
+        ok = _send_telegram(title, body)
+        return {"sent": 1 if ok else 0, "failed": 0 if ok else 1,
+                "configured": load_telegram_config() is not None, "channel": "telegram"}
+
+    devices = db.list_devices()
     if not devices:
-        return {"sent": 0, "failed": 0, "configured": True}
+        return {"sent": 0, "failed": 0, "configured": True, "channel": "apns"}
 
     import httpx
 
@@ -113,7 +153,7 @@ def notify(title: str, body: str, session_id: Optional[str] = None) -> dict:
                 failed += 1
                 if should_prune:
                     db.delete_device(dev["token"])
-    return {"sent": sent, "failed": failed, "configured": True}
+    return {"sent": sent, "failed": failed, "configured": True, "channel": "apns"}
 
 
 def notify_turn_finished(session_title: str, first_line: str, session_id: str) -> dict:

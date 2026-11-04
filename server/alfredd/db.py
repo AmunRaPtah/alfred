@@ -2,9 +2,11 @@
 reminders. One file, ~/.alfred/alfred.db, opened fresh per call (low
 concurrency, no need for a pool) with WAL for safe concurrent readers.
 """
+import json
 import sqlite3
 import time
 from contextlib import contextmanager
+from typing import Optional
 
 from . import config
 
@@ -23,6 +25,19 @@ CREATE TABLE IF NOT EXISTS reminders (
     fire_at TEXT NOT NULL,
     session_id TEXT,
     created REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS outbox (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    attachments TEXT,
+    status TEXT NOT NULL,
+    created REAL NOT NULL,
+    decided REAL,
+    sent REAL,
+    error TEXT
 );
 """
 
@@ -103,3 +118,50 @@ def list_reminders(after: str = None) -> list:
                 "SELECT id, title, body, fire_at, session_id FROM reminders ORDER BY fire_at ASC"
             )
         return [dict(r) for r in rows]
+
+
+# -------------------------------------------------------------------- outbox
+
+def create_outbox_item(oid: str, kind: str, recipient: str, subject: str, body: str,
+                        attachments: Optional[list] = None) -> dict:
+    now = time.time()
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO outbox (id, kind, recipient, subject, body, attachments, status, created)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+            (oid, kind, recipient, subject, body, json.dumps(attachments or []), now),
+        )
+    return get_outbox_item(oid)
+
+
+def get_outbox_item(oid: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM outbox WHERE id = ?", (oid,)).fetchone()
+    return _outbox_row(row) if row else None
+
+
+def list_outbox(status: Optional[str] = None) -> list:
+    with _conn() as conn:
+        if status:
+            rows = conn.execute("SELECT * FROM outbox WHERE status = ? ORDER BY created DESC", (status,))
+        else:
+            rows = conn.execute("SELECT * FROM outbox ORDER BY created DESC")
+        return [_outbox_row(r) for r in rows]
+
+
+def set_outbox_status(oid: str, status: str, error: Optional[str] = None) -> Optional[dict]:
+    now = time.time()
+    with _conn() as conn:
+        if status == "sent":
+            conn.execute("UPDATE outbox SET status = ?, decided = ?, sent = ? WHERE id = ?",
+                         (status, now, now, oid))
+        else:
+            conn.execute("UPDATE outbox SET status = ?, decided = ?, error = ? WHERE id = ?",
+                         (status, now, error, oid))
+    return get_outbox_item(oid)
+
+
+def _outbox_row(row) -> dict:
+    d = dict(row)
+    d["attachments"] = json.loads(d["attachments"]) if d.get("attachments") else []
+    return d

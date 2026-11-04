@@ -13,7 +13,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, UploadFile, 
 
 from pydantic import BaseModel
 
-from . import adapters, config, db, push, reaper, sessionio
+from . import adapters, config, db, memory, outbox, push, reaper, sessionio
 from .harnesses import get_harnesses
 from .idgen import new_id
 
@@ -436,6 +436,94 @@ def notify(body: NotifyBody, authorization: Optional[str] = Header(None)):
 def push_status(authorization: Optional[str] = Header(None)):
     check_auth(authorization)
     return push.status()
+
+
+# ---------- memory (Alfred protocol addition) ----------
+
+class MemoryBody(BaseModel):
+    text: str
+
+
+class RememberBody(BaseModel):
+    fact: str
+
+
+@app.get("/memory")
+def get_memory(authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    return {"text": memory.read()}
+
+
+@app.put("/memory")
+def put_memory(body: MemoryBody, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    return {"text": memory.write(body.text)}
+
+
+@app.post("/memory/remember")
+def remember_fact(body: RememberBody, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    return {"text": memory.remember(body.fact)}
+
+
+# ---------- outbox: outbound-email approval gate (Alfred protocol addition) ----------
+
+class OutboxBody(BaseModel):
+    kind: str = "email"
+    to: str
+    subject: str
+    body: str
+    attachments: Optional[list] = None
+
+
+@app.post("/outbox")
+def create_outbox(body: OutboxBody, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    if body.kind != "email":
+        raise HTTPException(400, f"unsupported outbox kind {body.kind!r}")
+    oid = new_id()
+    item = db.create_outbox_item(oid, body.kind, body.to, body.subject, body.body, body.attachments)
+    try:
+        push.notify(f"Approval needed: {body.subject}", f"Draft email to {body.to}")
+    except Exception:
+        pass
+    return item
+
+
+@app.get("/outbox")
+def list_outbox(status: Optional[str] = Query(None), authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    return {"outbox": db.list_outbox(status=status)}
+
+
+def _require_outbox_item(oid: str) -> dict:
+    item = db.get_outbox_item(oid)
+    if not item:
+        raise HTTPException(404, "no such outbox item")
+    return item
+
+
+@app.post("/outbox/{oid}/approve")
+def approve_outbox(oid: str, request: Request, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    outbox.check_approval_allowed(request)
+    item = _require_outbox_item(oid)
+    if item["status"] != "pending":
+        raise HTTPException(409, f"outbox item is {item['status']}, not pending")
+    try:
+        outbox.send_email(item["recipient"], item["subject"], item["body"], item["attachments"])
+    except Exception as e:
+        return db.set_outbox_status(oid, "failed", error=str(e))
+    return db.set_outbox_status(oid, "sent")
+
+
+@app.post("/outbox/{oid}/reject")
+def reject_outbox(oid: str, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    item = _require_outbox_item(oid)
+    if item["status"] != "pending":
+        raise HTTPException(409, f"outbox item is {item['status']}, not pending")
+    return db.set_outbox_status(oid, "rejected")
 
 
 # ---------- WebSocket ----------

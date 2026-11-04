@@ -9,11 +9,51 @@ from alfredd import config, db, push
 
 
 def test_notify_unconfigured_is_clean_noop(client, auth_headers):
-    # No ~/.alfred/apns.json written in this test -> configured:false, no error.
+    # No ~/.alfred/apns.json or telegram.json written in this test -> configured:false, no error.
     assert not config.APNS_CONFIG_FILE.exists()
+    assert not config.TELEGRAM_CONFIG_FILE.exists()
     r = client.post("/notify", json={"title": "hi", "body": "there"}, headers=auth_headers)
     assert r.status_code == 200
-    assert r.json() == {"sent": 0, "failed": 0, "configured": False}
+    assert r.json() == {"sent": 0, "failed": 1, "configured": False, "channel": "telegram"}
+
+
+def test_notify_falls_back_to_telegram(client, auth_headers, monkeypatch):
+    cfg = {"bot_token": "123:FAKE", "chat_id": "7003237201"}
+    config.TELEGRAM_CONFIG_FILE.write_text(json.dumps(cfg))
+
+    calls = []
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(url, json=None, timeout=None):
+        calls.append({"url": url, "json": json})
+        return _Resp()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    r = client.post("/notify", json={"title": "Alfred finished", "body": "the draft is ready"},
+                     headers=auth_headers)
+    assert r.status_code == 200
+    assert r.json() == {"sent": 1, "failed": 0, "configured": True, "channel": "telegram"}
+
+    assert len(calls) == 1
+    assert calls[0]["url"] == "https://api.telegram.org/bot123:FAKE/sendMessage"
+    assert calls[0]["json"]["chat_id"] == "7003237201"
+    assert "Alfred finished" in calls[0]["json"]["text"]
+
+    config.TELEGRAM_CONFIG_FILE.unlink()
+
+
+def test_push_status_reports_telegram_channel(client, auth_headers):
+    cfg = {"bot_token": "123:FAKE", "chat_id": "7003237201"}
+    config.TELEGRAM_CONFIG_FILE.write_text(json.dumps(cfg))
+    r = client.get("/push/status", headers=auth_headers)
+    assert r.json() == {"configured": True, "channel": "telegram", "devices": 0}
+    config.TELEGRAM_CONFIG_FILE.unlink()
 
 
 def test_push_status_unconfigured(client, auth_headers):
@@ -85,7 +125,7 @@ def test_notify_sends_signed_jwt_to_apns(client, auth_headers, apns_setup, monke
     r = client.post("/notify", json={"title": "Alfred finished", "body": "the draft is ready",
                                       "session_id": "sess-1"}, headers=auth_headers)
     assert r.status_code == 200
-    assert r.json() == {"sent": 1, "failed": 0, "configured": True}
+    assert r.json() == {"sent": 1, "failed": 0, "configured": True, "channel": "apns"}
 
     assert len(_FakeClient.calls) == 1
     call = _FakeClient.calls[0]
@@ -113,7 +153,7 @@ def test_notify_prunes_device_on_410(client, auth_headers, apns_setup, monkeypat
     assert db.count_devices() == 1
     r = client.post("/notify", json={"title": "x", "body": "y"}, headers=auth_headers)
     assert r.status_code == 200
-    assert r.json() == {"sent": 0, "failed": 1, "configured": True}
+    assert r.json() == {"sent": 0, "failed": 1, "configured": True, "channel": "apns"}
     assert db.count_devices() == 0
 
 

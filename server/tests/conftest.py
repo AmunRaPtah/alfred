@@ -23,7 +23,10 @@ def _clean_tables():
     with db._conn() as conn:
         conn.execute("DELETE FROM devices")
         conn.execute("DELETE FROM reminders")
+        conn.execute("DELETE FROM outbox")
     config.APNS_CONFIG_FILE.unlink(missing_ok=True)
+    config.TELEGRAM_CONFIG_FILE.unlink(missing_ok=True)
+    config.MEMORY_FILE.unlink(missing_ok=True)
     yield
 
 
@@ -38,7 +41,20 @@ def client(token):
     db.init_db()
     from alfredd.main import app
     from fastapi.testclient import TestClient
-    with TestClient(app) as c:
+    # Looks like the box talking to itself (127.0.0.1), matching how
+    # alfred-brain's own local curl calls alfredd in production.
+    with TestClient(app, client=("127.0.0.1", 50000)) as c:
+        yield c
+
+
+@pytest.fixture
+def remote_client(token):
+    """A client whose requests look like they come from a real phone/app on
+    wg0, not the box itself; the only path /outbox/{id}/approve accepts."""
+    db.init_db()
+    from alfredd.main import app
+    from fastapi.testclient import TestClient
+    with TestClient(app, client=("10.66.66.5", 50000)) as c:
         yield c
 
 
