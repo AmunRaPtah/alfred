@@ -8,6 +8,7 @@ struct ThreadView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var atBottom = true
+    @State private var showVoice = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -82,8 +83,11 @@ struct ThreadView: View {
                 if let banner = model.banner {
                     TroubleStrip(text: banner) { model.banner = nil }
                 }
-                AlfredComposer(model: model)
+                AlfredComposer(model: model, onVoice: { showVoice = true })
             }
+        }
+        .fullScreenCover(isPresented: $showVoice) {
+            VoiceModeView(model: model)
         }
         .sensoryFeedback(.success, trigger: model.turnCompletions)
         .onAppear {

@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
@@ -135,6 +136,7 @@ struct SettingsView: View {
 
             if !isOnboarding {
                 NotificationsSection()
+                VoiceSection()
                 Section {
                     LabeledContent("Version", value: Bundle.main.shortVersion)
                     LabeledContent("Protocol", value: "v1")
@@ -295,6 +297,38 @@ private struct NotificationsSection: View {
             sendResult = r.configured ? "Sent to \(r.sent) device(s)." : "alfredd has no push key configured."
         } catch {
             sendResult = APIClient.describe(error)
+        }
+    }
+}
+
+/// Voice mode preferences: synthesizer voice, speaking rate, and whether
+/// listening resumes automatically once Alfred finishes speaking.
+private struct VoiceSection: View {
+    @State private var settings = VoiceSettings.shared
+    @State private var voices = VoiceSettings.availableVoices()
+
+    var body: some View {
+        Section("Voice") {
+            Picker("Voice", selection: $settings.voiceIdentifier) {
+                ForEach(voices, id: \.identifier) { v in
+                    Text(voiceLabel(v)).tag(Optional(v.identifier))
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Speaking rate")
+                Slider(value: $settings.rate, in: 0.3...0.6)
+            }
+            Toggle("Resume listening automatically", isOn: $settings.autoListen)
+        } footer: {
+            Text("Enhanced and premium voices, where installed, are listed first.")
+        }
+    }
+
+    private func voiceLabel(_ v: AVSpeechSynthesisVoice) -> String {
+        switch v.quality {
+        case .enhanced: return "\(v.name) (Enhanced)"
+        case .premium: return "\(v.name) (Premium)"
+        default: return v.name
         }
     }
 }

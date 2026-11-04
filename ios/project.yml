@@ -54,6 +54,8 @@ targets:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: Alfred connects to your alfredd server over your private network.
         NSPhotoLibraryUsageDescription: Attach photos to your conversation with Alfred.
+        NSMicrophoneUsageDescription: Alfred listens for your voice during a live voice conversation.
+        NSSpeechRecognitionUsageDescription: Alfred transcribes your speech on-device during a live voice conversation.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.zyco.alfred

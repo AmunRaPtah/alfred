@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 /// palette, though the upload/photo/file plumbing underneath is the same.
 struct AlfredComposer: View {
     @Bindable var model: ChatModel
+    var onVoice: () -> Void = {}
 
     @State private var showFiles = false
     @State private var showPhotos = false
@@ -39,6 +40,16 @@ struct AlfredComposer: View {
                 }
                 .disabled(model.isExited)
                 .accessibilityLabel("Attach")
+
+                Button(action: onVoice) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .foregroundStyle(AlfredPalette.mist)
+                        .background(AlfredPalette.slate.opacity(0.7), in: Circle())
+                }
+                .disabled(model.isExited)
+                .accessibilityLabel("Voice conversation")
 
                 TextField("", text: $model.draft, prompt: Text(placeholder).foregroundStyle(AlfredPalette.mist), axis: .vertical)
                     .font(AlfredFont.body)

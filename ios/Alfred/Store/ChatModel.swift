@@ -189,6 +189,26 @@ final class ChatModel {
         }
     }
 
+    /// Send an utterance from voice mode: same wire path as `send()`, but
+    /// bypasses the composer's `draft`/`attachments` so voice mode never
+    /// disturbs whatever the user was typing.
+    func sendVoice(_ text: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isExited else { return }
+        let msg = PendingMessage(text: text, attachments: [])
+        pending.append(msg)
+        Haptics.send()
+        do {
+            try await api.send(session.id, text: text, attachments: [], clientId: msg.clientId)
+            banner = nil
+            if !stream.isRunning { start() }
+        } catch {
+            if let i = pending.firstIndex(where: { $0.id == msg.id }) { pending[i].failed = true }
+            banner = APIClient.describe(error)
+            Haptics.warning()
+        }
+    }
+
     func retry(_ p: PendingMessage) async {
         pending.removeAll { $0.id == p.id }
         draft = p.text
