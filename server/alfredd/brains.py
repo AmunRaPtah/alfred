@@ -21,6 +21,7 @@ survive an alfredd restart, the unit uses KillMode=process) and log to
 so a /proc cmdline scan finds them again after a restart, along with any
 `kaggle-glm start` an alfred-brain chat launched itself.
 """
+import json
 import os
 import re
 import shlex
@@ -218,6 +219,21 @@ def _t4_config_model():
         return None
 
 
+MIN_GPU_LEFT_H = 0.5
+QUOTA_NAME = "quota.json"  # written by kaggle-quota (cron every 15 min), under KAGGLE_STATE
+
+
+def quota():
+    """Weekly Kaggle accelerator quota in hours, or None if never fetched."""
+    try:
+        f = KAGGLE_STATE / QUOTA_NAME
+        q = json.loads(f.read_text())
+        q["checked"] = f.stat().st_mtime
+        return q
+    except Exception:
+        return None
+
+
 def compute():
     # In parallel, so a slow tunnel costs at most one PROBE_TIMEOUT.
     f_t4, f_tpu, f_procs = _pool.submit(probe_t4), _pool.submit(probe_tpu), _pool.submit(scan_processes)
@@ -269,6 +285,7 @@ def compute():
         "kernels_checked": kern_at or None,
         "checked": time.time(),
         "brains": brains,
+        "quota": quota(),
     }
 
 
@@ -312,6 +329,11 @@ def start(bid: str, replace: bool = False) -> dict:
     if b["tier"] == "tpu":
         return _launch(bid, "start", f"{shlex.quote(QWEN122_TPU)} start --wait")
 
+    q = quota()
+    left = (q or {}).get("gpu", {}).get("left_h")
+    if left is not None and left < MIN_GPU_LEFT_H:
+        raise BrainError(429, f"Kaggle GPU quota is used up for this week ({left}h left); "
+                              f"it resets {q.get('refresh')}. Use Sonnet or the TPU meanwhile.")
     km = b["kaggle_model"]
     start_cmd = f"KAGGLE_MODEL={shlex.quote(km)} {shlex.quote(KAGGLE_GLM)} start --wait"
     others = [x for x in snap["brains"] if x["tier"] == "t4" and x["id"] != bid

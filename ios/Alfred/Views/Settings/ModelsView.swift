@@ -30,7 +30,7 @@ struct ModelsView: View {
                     } header: {
                         Text(rows[0].tierLabel)
                     } footer: {
-                        Text(footer(tier))
+                        Text(footer(tier, catalog: catalog))
                     }
                 }
             }
@@ -71,10 +71,16 @@ struct ModelsView: View {
         return "\(loaded) is running"
     }
 
-    private func footer(_ tier: String) -> String {
+    private func footer(_ tier: String, catalog: BrainCatalog) -> String {
+        let base = footerBase(tier)
+        let q = tier == "t4" ? catalog.quotaLine("gpu") : tier == "tpu" ? catalog.quotaLine("tpu") : nil
+        return q.map { base + "\n" + $0 } ?? base
+    }
+
+    private func footerBase(_ tier: String) -> String {
         switch tier {
         case "proxy": return "Always available. New conversations use this unless you pick another model."
-        case "t4": return "Free Kaggle 2x T4, one model at a time. Stops by itself after 30 idle minutes."
+        case "t4": return "Free Kaggle 2x T4, one model at a time. Stops by itself after 15 idle minutes."
         default: return "Free Kaggle TPU v5e-8. Often queued for capacity."
         }
     }

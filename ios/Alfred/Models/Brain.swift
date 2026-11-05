@@ -98,11 +98,28 @@ struct BrainCatalog {
     var brains: [Brain]
     var defaultId: String
     var t4Loaded: String?
+    /// Weekly Kaggle quota in hours per tier ("gpu"/"tpu"), from kaggle-quota.
+    var quota: [String: Quota] = [:]
+    var quotaRefresh: String?
+
+    struct Quota: Hashable {
+        var used: Double
+        var allowed: Double
+        var left: Double
+    }
 
     init(json j: JSONValue) {
         brains = (j["brains"]?.array ?? j.array ?? []).compactMap(Brain.init(json:))
         defaultId = j["default"]?.string ?? Brain.defaultId
         t4Loaded = j["t4_loaded"]?.string
+        if let q = j["quota"] {
+            quotaRefresh = q["refresh"]?.string
+            for tier in ["gpu", "tpu"] {
+                if let t = q[tier], let used = t["used_h"]?.double, let allowed = t["allowed_h"]?.double {
+                    quota[tier] = Quota(used: used, allowed: allowed, left: t["left_h"]?.double ?? allowed - used)
+                }
+            }
+        }
     }
 
     init(brains: [Brain]) {
@@ -111,9 +128,30 @@ struct BrainCatalog {
         t4Loaded = nil
     }
 
+    /// "Quota: 4.2 of 6 h used this week, 1.8 h left. Resets Sat 7 Nov."
+    func quotaLine(_ tier: String) -> String? {
+        guard let q = quota[tier] else { return nil }
+        let f = { (x: Double) in String(format: x == x.rounded() ? "%.0f" : "%.1f", x) }
+        var line = q.left <= 0
+            ? "Quota used up: \(f(q.used)) of \(f(q.allowed)) h this week."
+            : "Quota: \(f(q.used)) of \(f(q.allowed)) h used this week, \(f(q.left)) h left."
+        if let r = quotaRefresh, let d = ISO8601DateFormatter.withFractional.date(from: r) {
+            line += " Resets " + d.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + "."
+        }
+        return line
+    }
+
     static let fallback = BrainCatalog(brains: Brain.fallback)
 
     func brain(_ id: String?) -> Brain? {
         brains.first { $0.id == (id ?? defaultId) }
     }
+}
+
+private extension ISO8601DateFormatter {
+    static let withFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }

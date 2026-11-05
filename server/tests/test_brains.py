@@ -1,5 +1,6 @@
 """GET /brains and POST /brains/{id}/start|stop with every probe and the
 subprocess launcher mocked: these tests never touch Kaggle or the tunnels."""
+import json
 import pytest
 
 from alfredd import brains, sessionio
@@ -170,3 +171,25 @@ def test_adapter_keeps_kaggle_session_on_exit():
     assert env["ALFRED_BRAIN"] == "khermes" and env["ALFRED_BRAIN_KEEP"] == "1"
     _, env = adapters.claude_cmd({"harness": "alfred", "permission": "bypass"})
     assert "ALFRED_BRAIN" not in env
+
+
+def _quota(tmp_path, gpu_left):
+    (tmp_path / brains.QUOTA_NAME).write_text(json.dumps({
+        "refresh": "2026-11-07T00:00:00Z",
+        "gpu": {"used_h": 6 - gpu_left, "allowed_h": 6.0, "left_h": gpu_left},
+        "tpu": {"used_h": 0.0, "allowed_h": 20.0, "left_h": 20.0}}))
+
+
+def test_quota_reported_and_t4_start_refused_when_spent(client, auth_headers, world, tmp_path):
+    _quota(tmp_path, -2.0)
+    body = client.get("/brains", headers=auth_headers).json()
+    assert body["quota"]["gpu"]["left_h"] == -2.0 and "checked" in body["quota"]
+    r = client.post("/brains/khermes/start", headers=auth_headers)
+    assert r.status_code == 429 and "resets" in r.json()["detail"]
+    assert world.launched == []
+    assert client.post("/brains/tpu/start", headers=auth_headers).status_code != 429
+
+
+def test_t4_start_allowed_with_quota_left(client, auth_headers, world, tmp_path):
+    _quota(tmp_path, 3.0)
+    assert client.post("/brains/khermes/start", headers=auth_headers).status_code == 200
