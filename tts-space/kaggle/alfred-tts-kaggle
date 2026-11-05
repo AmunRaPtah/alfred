@@ -43,7 +43,7 @@ GATE_ARG = "alfred-tts"
 STATE = Path("/var/lib/kaggle-glm")
 KEY_FILE = Path("/root/.config/kaggle-glm/alfred-tts.key")
 TUNNEL_DATASET = f"{USER}/llm-burst-kaggle-glm"   # kaggle-glm-key + kaggle-glm-known-hosts
-IDLE_MIN = int(os.environ.get("ALFRED_TTS_KAGGLE_IDLE_MIN", "60"))
+IDLE_MIN = int(os.environ.get("ALFRED_TTS_KAGGLE_IDLE_MIN", "715")  # CPU session: no quota, so idle out near the 12h cap)
 WAIT_MIN = int(os.environ.get("ALFRED_TTS_KAGGLE_WAIT_MIN", "20"))
 TTS_JSON = Path("/root/.alfred/tts.json")
 
