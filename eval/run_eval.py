@@ -47,6 +47,8 @@ BACKENDS = {
              "sys_file": os.path.join(KAGGLE_DIR, "kglm-system.md"), "kaggle": True},
     "kq122": {"burst_model": "burst-qwen35-122b-kaggle", "kaggle_model": "qwen35-122b-kaggle",
               "sys_file": os.path.join(KAGGLE_DIR, "kq122-system.md"), "kaggle": True},
+    "khermes": {"burst_model": "burst-qwen36-35b-kaggle", "kaggle_model": "qwen36-35b-kaggle",
+                "sys_file": os.path.join(KAGGLE_DIR, "khermes-system.md"), "kaggle": True},
     # Qwen3.5-122B on a Kaggle TPU v5e-8 (llm-burst kaggle-tpu/qwen122-tpu, box
     # 127.0.0.1:8193). Its session is launched by `qwen122-tpu`, not kaggle-glm,
     # so run.sh only health-checks it.
