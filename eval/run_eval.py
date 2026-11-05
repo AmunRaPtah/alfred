@@ -4,7 +4,8 @@
 Usage:
   run_eval.py [--backend kqwen] [--only id1,id2] [--out-prefix NAME]
 
-Backends (see BACKENDS below): kqwen, kglm, kq122 run on the shared Kaggle
+Backends (see BACKENDS below): qwen122-tpu needs the Kaggle TPU session already
+serving on 127.0.0.1:8193. kqwen, kglm, kq122 run on the shared Kaggle
 2x T4 tier via kaggle-glm; this script does NOT start/stop that session --
 run.sh (or the caller) is responsible for that, so one Kaggle session can be
 reused across the whole suite. Any other BACKEND name is treated as a raw
@@ -46,6 +47,11 @@ BACKENDS = {
              "sys_file": os.path.join(KAGGLE_DIR, "kglm-system.md"), "kaggle": True},
     "kq122": {"burst_model": "burst-qwen35-122b-kaggle", "kaggle_model": "qwen35-122b-kaggle",
               "sys_file": os.path.join(KAGGLE_DIR, "kq122-system.md"), "kaggle": True},
+    # Qwen3.5-122B on a Kaggle TPU v5e-8 (llm-burst kaggle-tpu/qwen122-tpu, box
+    # 127.0.0.1:8193). Its session is launched by `qwen122-tpu`, not kaggle-glm,
+    # so run.sh only health-checks it.
+    "qwen122-tpu": {"burst_model": "burst-qwen122-tpu", "kaggle_model": None,
+                    "sys_file": None, "kaggle": False},
 }
 
 

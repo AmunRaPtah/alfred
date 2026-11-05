@@ -9,6 +9,7 @@
 #   ./run.sh                      # backend=kqwen (default)
 #   ALFRED_BACKEND=kglm ./run.sh
 #   ./run.sh --backend kq122 --only tool_create_files,instr_exact_format
+#   ./run.sh --backend qwen122-tpu   # TPU session must already be up
 #
 # Non-Kaggle backends (anything not in kqwen/kglm/kq122) skip the
 # kaggle-glm start/stop entirely, e.g. a future TPU tier or the always-on
@@ -32,6 +33,12 @@ case "$BACKEND" in
   kq122) KAGGLE_MODEL=qwen35-122b-kaggle; USES_KAGGLE=1 ;;
   *) KAGGLE_MODEL=""; USES_KAGGLE=0 ;;
 esac
+
+# The TPU tier has its own launcher (qwen122-tpu); never start or stop it here.
+if [ "$BACKEND" = qwen122-tpu ] && ! curl -sf -m 5 http://127.0.0.1:8193/health >/dev/null; then
+  echo "run.sh: qwen122-tpu is not serving on 127.0.0.1:8193; start it with 'qwen122-tpu' first" >&2
+  exit 1
+fi
 
 STOPPED=0
 stop_session() {
