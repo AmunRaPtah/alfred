@@ -8,7 +8,6 @@ import Observation
 @Observable
 @MainActor
 final class AppStore {
-    static let defaultWorkspace = "/root/projects/alfred/workspace"
     private static let primaryKey = "alfred.primarySessionId"
 
     var config: ServerConfig
@@ -16,6 +15,8 @@ final class AppStore {
     private(set) var listError: String?
     private(set) var lastSync: Date?
     private(set) var isRefreshing = false
+    /// Last GET /brains answer; the static fallback until the first fetch.
+    private(set) var brainCatalog: BrainCatalog = .fallback
 
     @ObservationIgnored private var chats: [String: ChatModel] = [:]
     @ObservationIgnored private var primarySessionId: String? {
@@ -97,7 +98,7 @@ final class AppStore {
             }
         }
         do {
-            let s = try await api.createSession(.init(cwd: Self.defaultWorkspace, permission: PermissionMode.bypass.rawValue, text: nil))
+            let s = try await api.createSession(.init(cwd: nil, permission: PermissionMode.bypass.rawValue, text: nil))
             upsert(s)
             primarySessionId = s.id
             return chat(for: s)
@@ -109,17 +110,33 @@ final class AppStore {
 
     /// Starts a brand new primary conversation, abandoning the old one (used
     /// by Today's "New conversation" action and Inbox's older-thread picker).
-    func startNewPrimary() async -> ChatModel? {
+    /// `brain` picks the model for the new thread (GET /brains id); nil keeps
+    /// the server default.
+    func startNewPrimary(brain: String? = nil) async -> ChatModel? {
         // Create directly: primaryChat() would fall back to the most recent
         // session and reopen the old conversation instead of starting one.
         do {
-            let s = try await api.createSession(.init(cwd: Self.defaultWorkspace, permission: PermissionMode.bypass.rawValue, text: nil))
+            let s = try await api.createSession(.init(cwd: nil, permission: PermissionMode.bypass.rawValue,
+                                                      text: nil, brain: brain))
             upsert(s)
             primarySessionId = s.id
             return chat(for: s)
         } catch {
             listError = APIClient.describe(error)
             return nil
+        }
+    }
+
+    /// Refreshes `brainCatalog`; returns the error text on failure so the
+    /// Models screen can show it (the cached catalog is kept).
+    @discardableResult
+    func refreshBrains() async -> String? {
+        do {
+            let c = try await api.brains()
+            if !c.brains.isEmpty { brainCatalog = c }
+            return nil
+        } catch {
+            return APIClient.describe(error)
         }
     }
 

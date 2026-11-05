@@ -31,6 +31,8 @@ struct Session: Codable, Identifiable, Hashable {
     var harness: String
     var profile: String?
     var model: String?
+    /// alfred-brain choice (sonnet, khermes, kqwen, kglm, tpu); nil = default.
+    var brain: String?
     var cwd: String
     var permission: String
     var state: SessionState
@@ -47,6 +49,7 @@ struct Session: Codable, Identifiable, Hashable {
         harness = json["harness"]?.string ?? "alfred"
         profile = json["profile"]?.string
         model = json["model"]?.string
+        brain = json["brain"]?.string
         cwd = json["cwd"]?.string ?? ""
         permission = json["permission"]?.string ?? "bypass"
         state = SessionState(lenient: json["state"]?.string)
@@ -66,7 +69,7 @@ struct Session: Codable, Identifiable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, harness, profile, model, cwd, permission, state, created, updated, tmux
+        case id, title, harness, profile, model, brain, cwd, permission, state, created, updated, tmux
         case lastSeq = "last_seq"
         case nativeSessionId = "native_session_id"
     }
@@ -78,6 +81,7 @@ struct Session: Codable, Identifiable, Hashable {
         try c.encode(harness, forKey: .harness)
         try c.encodeIfPresent(profile, forKey: .profile)
         try c.encodeIfPresent(model, forKey: .model)
+        try c.encodeIfPresent(brain, forKey: .brain)
         try c.encode(cwd, forKey: .cwd)
         try c.encode(permission, forKey: .permission)
         try c.encode(state.rawValue, forKey: .state)

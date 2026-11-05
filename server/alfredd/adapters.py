@@ -56,9 +56,13 @@ def claude_cmd(meta):
         PERMISSION_MAP_CLAUDE.get(meta["permission"], "bypassPermissions")]
     if meta.get("native_session_id"):
         cmd += ["--resume", meta["native_session_id"]]
-    # The model is fixed by alfred-brain (Kaggle-hosted Qwen3.8-27B, or a TPU
-    # endpoint later); ignore any meta["model"].
-    return cmd, _sandbox_env()
+    # alfred-brain picks the model; meta["model"] is ignored. meta["brain"]
+    # (set at session creation, used by the eval) overrides its default, and
+    # keeps any Kaggle kernel running when the session ends.
+    env = _sandbox_env()
+    if meta.get("brain"):
+        env.update({"ALFRED_BRAIN": meta["brain"], "ALFRED_BRAIN_KEEP": "1"})
+    return cmd, env
 
 
 def claude_input_line(text, attachments):

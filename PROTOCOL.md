@@ -32,6 +32,11 @@ cert) and the session/event/WebSocket model unchanged, except where noted.
 | POST | `/voice/turn` | `{session_id, text, voice?}` | `text/event-stream` (SSE), see "Voice turns" below; 404 if the session doesn't exist |
 | POST | `/tts` | `{text, voice?, engine?, speed?}` | `audio/mpeg` bytes, proxied to the TTS service; 502 `{detail:{error, upstream?}}` if it is down or errors, 503 if `~/.alfred/tts.json` is missing |
 | GET | `/tts/voices` | | `{engines:{"kokoro":[...], "pocket":[...]}, default_engine, default_voice}`; 502 if the TTS service is down |
+| GET | `/brains` | | `{default:"sonnet", t4_loaded:id\|null, t4_loaded_model, checked, kernels_checked, brains:[{id, label, short, tier:"proxy"\|"t4"\|"tpu", note, status:"up"\|"starting"\|"stopping"\|"down", detail, controllable, kernel, default}]}`; tunnel probes cached ~10 s, Kaggle kernel state refreshed in the background every ~3 min |
+| POST | `/brains/{id}/start?replace=0\|1` | | `{ok, id, action:"start"\|"replace"\|"none", pid?, log?}`; runs `kaggle-glm start --wait` / `qwen122-tpu start --wait` detached, logged to `~/.alfred/brains.log`; 409 if another T4 model is up/starting and `replace` is not 1 (replace = stop it, wait for its kernel to end, then start); 400 for `sonnet`, 404 unknown |
+| POST | `/brains/{id}/stop` | | `{ok, id, action:"stop"}`; `kaggle-glm stop` / `qwen122-tpu stop` (sets the stop flag); 409 if not running |
+
+`POST /sessions` also takes `brain` (one of the `/brains` ids; omitted/null = alfred-brain's default, Sonnet; anything else is 400). It is stored in the session JSON as `brain` and becomes `ALFRED_BRAIN` for that session's alfred-brain, with `ALFRED_BRAIN_KEEP=1` so ending the chat never stops the shared Kaggle session.
 
 `fire_at` is ISO-8601 UTC (`2026-11-05T09:00:00Z`).
 

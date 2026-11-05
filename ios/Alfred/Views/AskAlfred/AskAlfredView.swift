@@ -10,6 +10,7 @@ struct AskAlfredView: View {
     @State private var chat: ChatModel?
     @State private var loadError: String?
     @State private var showOlder = false
+    @State private var showModels = false
     @State private var renaming = false
     @State private var renameText = ""
 
@@ -32,10 +33,14 @@ struct AskAlfredView: View {
             .navigationTitle(chat?.session.displayTitle ?? "Ask Alfred")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) { brainBadge }
                 ToolbarItem(placement: .topBarTrailing) { menu }
             }
         }
-        .task { await load() }
+        .task {
+            await load()
+            await store.refreshBrains()
+        }
         .onChange(of: nav.pendingSessionId) { _, id in
             guard let id else { return }
             nav.pendingSessionId = nil
@@ -47,6 +52,7 @@ struct AskAlfredView: View {
                 Task { await open(id) }
             }
         }
+        .sheet(isPresented: $showModels) { ModelsSheet() }
         .alert("Name this conversation", isPresented: $renaming) {
             TextField("Title", text: $renameText)
             Button("Cancel", role: .cancel) {}
@@ -74,14 +80,41 @@ struct AskAlfredView: View {
                 renaming = true
             } label: { Label("Rename", systemImage: "pencil") }
             .disabled(chat == nil)
-            Button {
-                Task {
-                    chat = await store.startNewPrimary()
+            Menu {
+                ForEach(store.brainCatalog.brains) { b in
+                    Button {
+                        Task {
+                            chat = await store.startNewPrimary(brain: b.id == store.brainCatalog.defaultId ? nil : b.id)
+                        }
+                    } label: {
+                        Label("\(b.label) · \(b.statusLabel)", systemImage: b.statusIcon)
+                    }
                 }
             } label: { Label("New conversation", systemImage: "square.and.pencil") }
             Button { showOlder = true } label: { Label("Older conversations", systemImage: "clock.arrow.circlepath") }
+            Button { showModels = true } label: { Label("Models", systemImage: "cpu") }
         } label: {
             Image(systemName: "ellipsis.circle")
+        }
+    }
+
+    /// Which brain the current thread runs on; tapping it opens Models.
+    @ViewBuilder
+    private var brainBadge: some View {
+        if let session = chat?.session {
+            let b = store.brainCatalog.brain(session.brain)
+            Button { showModels = true } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "cpu")
+                    Text(b?.short ?? session.brain ?? "Sonnet")
+                }
+                .font(AlfredFont.caption)
+                .foregroundStyle(AlfredPalette.brass)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().stroke(AlfredPalette.brass.opacity(0.5)))
+            }
+            .accessibilityLabel("Model: \(b?.label ?? session.brain ?? "default")")
         }
     }
 

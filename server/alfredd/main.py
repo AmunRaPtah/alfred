@@ -16,13 +16,14 @@ from pydantic import BaseModel
 
 import httpx
 
-from . import adapters, autocapture, config, db, memory, outbox, push, reaper, sessionio, voice
+from . import adapters, autocapture, brains, config, db, memory, outbox, push, reaper, sessionio, voice
 from .harnesses import get_harnesses
 from .idgen import new_id
 
 app = FastAPI()
 
 VALID_PERMISSIONS = {"bypass", "acceptEdits", "default", "plan"}
+VALID_BRAINS = set(brains.IDS)  # sonnet, khermes, kqwen, kglm, tpu
 VALID_HARNESSES = {h["id"] for h in get_harnesses()}
 
 # Session ids with a live WebSocket client attached right now. Used so the
@@ -86,7 +87,7 @@ def _scan_for_finished_turns():
             continue
         sid = d.name
         meta = sessionio.read_meta(sid)
-        if not meta or meta.get("state") != "idle":
+        if not meta or meta.get("state") != "idle" or meta.get("ephemeral"):
             continue
         last_seq = meta.get("last_seq", 0)
         pushed_seq = meta.get("push_seq", 0)
@@ -181,7 +182,12 @@ async def create_session(request: Request, authorization: Optional[str] = Header
     permission = body.get("permission", "bypass")
     if permission not in VALID_PERMISSIONS:
         raise HTTPException(400, f"bad permission {permission!r}")
-    cwd = body.get("cwd") or str(Path.home())
+    brain = body.get("brain") or None
+    if brain is not None and brain not in VALID_BRAINS:
+        raise HTTPException(400, f"unknown brain {brain!r}")
+    cwd = body.get("cwd") or config.WORKSPACE
+    if cwd.rstrip("/") in config.LEGACY_WORKSPACES:
+        cwd = config.WORKSPACE
     sid = new_id()
     now = time.time()
     text = body.get("text")
@@ -192,6 +198,10 @@ async def create_session(request: Request, authorization: Optional[str] = Header
         "cwd": cwd, "permission": permission, "state": "starting",
         "created": now, "updated": now, "last_seq": 0,
         "native_session_id": None, "tmux": f"ax-{sid}",
+        # Ephemeral sessions (the eval suite) skip memory capture and push.
+        "ephemeral": bool(body.get("ephemeral")),
+        # Per-session brain override (alfred-brain's ALFRED_BRAIN); None = default.
+        "brain": brain,
     }
     sdir = config.session_dir(sid)
     sdir.mkdir(parents=True, exist_ok=True)
@@ -372,6 +382,33 @@ def quota(authorization: Optional[str] = Header(None)):
         return json.loads(out)
     except Exception:
         return {}
+
+
+# ---------- brains (model picker + Kaggle session control) ----------
+
+@app.get("/brains")
+def list_brains(authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    return brains.status()
+
+
+def _brain_call(fn, *args):
+    try:
+        return fn(*args)
+    except brains.BrainError as e:
+        raise HTTPException(e.code, e.detail)
+
+
+@app.post("/brains/{bid}/start")
+def start_brain(bid: str, replace: int = Query(0), authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    return _brain_call(brains.start, bid, bool(replace))
+
+
+@app.post("/brains/{bid}/stop")
+def stop_brain(bid: str, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    return _brain_call(brains.stop, bid)
 
 
 # ---------- devices (Alfred protocol addition) ----------

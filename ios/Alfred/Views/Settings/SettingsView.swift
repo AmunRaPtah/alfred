@@ -135,6 +135,7 @@ struct SettingsView: View {
             }
 
             if !isOnboarding {
+                ModelsSection()
                 NotificationsSection()
                 VoiceSection()
                 ServerVoiceSection()
@@ -339,6 +340,38 @@ private struct VoiceSection: View {
 /// Server TTS for voice mode (/tts): on/off, engine and voice, populated from
 /// GET /tts/voices. Selections persist in VoiceSettings; nil means the
 /// server's default_engine/default_voice.
+private struct ModelsSection: View {
+    @Environment(AppStore.self) private var store
+    @State private var showModels = false
+
+    var body: some View {
+        Section {
+            Button { showModels = true } label: {
+                HStack {
+                    Label("Models", systemImage: "cpu")
+                    Spacer()
+                    Text(summary)
+                        .font(AlfredFont.caption)
+                        .foregroundStyle(AlfredPalette.mist)
+                    Image(systemName: "chevron.right")
+                        .font(.footnote)
+                        .foregroundStyle(AlfredPalette.mist)
+                }
+            }
+            .foregroundStyle(AlfredPalette.parchment)
+        } footer: {
+            Text("Start or stop the Kaggle-hosted models. Pick one per conversation from Ask Alfred's New conversation menu.")
+        }
+        .sheet(isPresented: $showModels) { ModelsSheet() }
+        .task { await store.refreshBrains() }
+    }
+
+    private var summary: String {
+        let up = store.brainCatalog.brains.filter { $0.tier != "proxy" && $0.status == .up }
+        return up.isEmpty ? "Sonnet only" : up.map(\.short).joined(separator: ", ") + " up"
+    }
+}
+
 private struct ServerVoiceSection: View {
     @Environment(AppStore.self) private var store
     @State private var settings = VoiceSettings.shared

@@ -46,6 +46,8 @@ struct APIClient {
         var cwd: String?
         var permission: String?
         var text: String?
+        /// GET /brains id; nil keeps the server default (sonnet).
+        var brain: String? = nil
     }
 
     /// Always creates an "alfred" harness session; Alfred has exactly one.
@@ -54,6 +56,7 @@ struct APIClient {
         if let c = n.cwd, !c.isEmpty { body["cwd"] = .string(c) }
         if let p = n.permission { body["permission"] = .string(p) }
         if let t = n.text, !t.isEmpty { body["text"] = .string(t) }
+        if let b = n.brain, !b.isEmpty { body["brain"] = .string(b) }
         return try decodeSession(try await request("POST", "/sessions", body: .object(body)))
     }
 
@@ -278,6 +281,23 @@ struct APIClient {
 
     func ttsVoices() async throws -> TTSVoices {
         TTSVoices(json: try await request("GET", "/tts/voices"))
+    }
+
+    // MARK: Brains (PROTOCOL.md "Additions": /brains)
+
+    func brains() async throws -> BrainCatalog {
+        BrainCatalog(json: try await request("GET", "/brains"))
+    }
+
+    /// Starts a Kaggle-hosted brain in the background. A 409 means another T4
+    /// model holds the shared session; pass `replace` to swap it out.
+    func startBrain(_ id: String, replace: Bool = false) async throws {
+        let query = replace ? [URLQueryItem(name: "replace", value: "1")] : []
+        _ = try await request("POST", "/brains/\(id)/start", query: query)
+    }
+
+    func stopBrain(_ id: String) async throws {
+        _ = try await request("POST", "/brains/\(id)/stop")
     }
 
     // MARK: Outbox (PROTOCOL.md "Outbox")

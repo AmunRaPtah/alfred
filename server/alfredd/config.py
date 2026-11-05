@@ -18,6 +18,14 @@ TTS_CONFIG_FILE = ALFRED_HOME / "tts.json"
 BIND_HOST = "10.66.66.1"
 BIND_PORT = 3341
 
+# Default session cwd. Must sit outside /root: Claude Code loads CLAUDE.md and
+# .claude/settings*.json from every ancestor of the cwd, and /root/CLAUDE.md is
+# the operator's own Claude Code brief (vault, AXI, token rules), not Alfred's.
+# Verified 2026-11-05: a session in /root saw it, one in /tmp did not.
+WORKSPACE = os.environ.get("ALFRED_WORKSPACE", "/srv/alfred")
+# cwd values older app builds send by default; remapped to WORKSPACE.
+LEGACY_WORKSPACES = {"/root/projects/alfred/workspace", "/root", str(Path.home())}
+
 ALFRED_RUNNER = str(Path(__file__).resolve().parent.parent / "alfred-runner")
 
 # Kaggle TPU (qwen122-tpu) tunnel base URL. alfred-brain health-checks it and

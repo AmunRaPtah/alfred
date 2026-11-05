@@ -170,7 +170,7 @@ def sweep_once() -> list:
                 continue
             sid = d.name
             meta = sessionio.read_meta(sid)
-            if not meta or not _is_idle(meta, now):
+            if not meta or meta.get("ephemeral") or not _is_idle(meta, now):
                 continue
             try:
                 added = process_session(sid, meta, client=client)
