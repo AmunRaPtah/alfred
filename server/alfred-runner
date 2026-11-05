@@ -76,6 +76,7 @@ class Runner:
         self.pending = list(self.meta.get("queue") or [])
         self.busy = False          # a turn (or shell command) is in flight
         self.turn_text = False     # current turn produced assistant text
+        self.turn_cmd = None       # slash command the current turn runs
         self.child = None
         self.child_pgid = None
         self.should_exit = threading.Event()
@@ -186,7 +187,8 @@ class Runner:
 
     def reader_long_lived(self):
         parse = adapters.agy_parse if self.meta["harness"] == "agy" else adapters.claude_parse
-        for line in self.child.stdout:
+        child = self.child
+        for line in child.stdout:
             line = line.strip()
             if not line:
                 continue
@@ -212,7 +214,9 @@ class Runner:
                     self.turn_done()
                 if ev["type"] == "status" and ev.get("state") == "running":
                     self.set_state("running")
-        rc = self.child.wait()
+        rc = child.wait()
+        if child is not self.child:  # replaced by fresh_conversation()
+            return
         self.set_state("exited")
         self.emit({"type": "status", "state": "exited", "detail": f"process exited code {rc}"})
         self.should_exit.set()
@@ -230,8 +234,10 @@ class Runner:
         if t == "_result_text":
             # Local slash commands (/cost, /context...) answer only in the
             # final result record, with no assistant message.
-            if not self.turn_text and ev["text"].strip():
-                self.emit({"type": "assistant", "msg_id": f"result-{time.time():.0f}", "text": ev["text"]})
+            if not self.turn_text:
+                text = ev["text"].strip() or (f"/{self.turn_cmd} done." if self.turn_cmd else "")
+                if text:
+                    self.emit({"type": "assistant", "msg_id": f"result-{time.time():.0f}", "text": text})
             return True
         return t.startswith("_")
 
@@ -243,6 +249,35 @@ class Runner:
         self.turn_text = False
         self.child.stdin.write(fn(text, attachments))
         self.child.stdin.flush()
+
+    def say(self, text):
+        self.emit({"type": "assistant", "msg_id": f"runner-{time.time():.0f}", "text": text})
+
+    def local_command(self, text):
+        """Answer the slash commands the harness can't serve under -p.
+        Returns False when the harness should run it."""
+        name = adapters.slash_name(text)
+        self.turn_cmd = name
+        if name in adapters.RUNNER_COMMANDS:
+            self.fresh_conversation()
+            self.say("Very good. Earlier conversation set aside; we begin afresh.")
+        elif name in adapters.HIDDEN_COMMANDS:
+            self.say(f"/{name} only works in a terminal session, not from the app.")
+        else:
+            return False
+        self.turn_done()
+        return True
+
+    def fresh_conversation(self):
+        child, self.child = self.child, None
+        if child is not None and child.poll() is None:
+            try:
+                os.killpg(self.child_pgid, signal.SIGTERM)
+                child.wait(timeout=10)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                pass
+        self.child_pgid = None
+        self.set_state("running", native_session_id=None)
 
     # ---------------- codex (process per turn) ----------------
 
@@ -338,7 +373,9 @@ class Runner:
                     self.run_shell(text[1:].strip())
                     self.turn_done()
                 elif long_lived:
-                    self.send_long_lived(text, attachments)
+                    text = adapters.normalize_slash(text, self.meta)
+                    if not self.local_command(text):
+                        self.send_long_lived(text, attachments)
                 else:
                     self.send_codex(text, attachments)
                     self.turn_done()

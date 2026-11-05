@@ -145,9 +145,17 @@ def save_commands(harness, commands):
         pass
 
 
-def known_commands(meta):
-    if meta["harness"] not in LONG_LIVED:
-        return []
+# Built-ins that hang (/doctor), are gone (/agents), are unavailable under -p
+# (/fast, /focus) or only make sense at a terminal. The runner answers these
+# itself instead of passing them to the harness.
+HIDDEN_COMMANDS = {"doctor", "agents", "fast", "focus", "heapdump", "list-agents",
+                   "__remote-workflow", "workflow-launch-exec"}
+# /clear prints nothing under -p and keeps the native session, so the runner
+# handles it (and /new) by starting a fresh harness session.
+RUNNER_COMMANDS = ["new", "clear"]
+
+
+def _harness_commands(meta):
     if meta.get("commands"):
         return meta["commands"]
     try:
@@ -157,6 +165,33 @@ def known_commands(meta):
     skills = Path.home() / ".claude" / "skills"
     names = sorted(p.name for p in skills.iterdir() if (p / "SKILL.md").exists()) if skills.is_dir() else []
     return CLAUDE_BUILTINS + names
+
+
+def known_commands(meta):
+    if meta["harness"] not in LONG_LIVED:
+        return []
+    rest = [c for c in _harness_commands(meta) if c not in HIDDEN_COMMANDS and c not in RUNNER_COMMANDS]
+    return RUNNER_COMMANDS + rest
+
+
+def slash_name(text):
+    """The command word of a `/command args` message, else None."""
+    if not text.startswith("/") or text.startswith("//"):
+        return None
+    word = text[1:].split(None, 1)
+    return word[0] if word else None
+
+
+def normalize_slash(text, meta):
+    """Lowercase a known command word: the iPhone keyboard turns /context into
+    /Context, which the harness does not recognise and sends to the model."""
+    name = slash_name(text)
+    if not name or name == name.lower():
+        return text
+    known = {c.lower() for c in RUNNER_COMMANDS + list(HIDDEN_COMMANDS) + _harness_commands(meta)}
+    if name.lower() not in known:
+        return text
+    return "/" + name.lower() + text[1 + len(name):]
 
 
 LONG_LIVED = {"alfred"}

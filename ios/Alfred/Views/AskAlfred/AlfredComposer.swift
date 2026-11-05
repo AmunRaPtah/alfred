@@ -55,6 +55,10 @@ struct AlfredComposer: View {
                     .font(AlfredFont.body)
                     .foregroundStyle(AlfredPalette.parchment)
                     .lineLimit(1...8)
+                    // A leading "/" is a command: keep the keyboard from
+                    // turning /context into /Context or "correcting" it.
+                    .textInputAutocapitalization(model.draft.hasPrefix("/") ? .never : .sentences)
+                    .autocorrectionDisabled(model.draft.hasPrefix("/"))
                     .focused($focused)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
