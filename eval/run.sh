@@ -14,6 +14,23 @@
 # Non-Kaggle backends (anything not in kqwen/kglm/kq122) skip the
 # kaggle-glm start/stop entirely, e.g. a future TPU tier or the always-on
 # Modal burst tier (./run.sh --backend burst-qwen38-27b).
+#
+# Frontier models via the Kaggle Benchmarks Model Proxy ($10/day, $100/mo
+# quota; check with `kaggle benchmarks quota`): ./run.sh --backend
+# kbench-<slug>, e.g. kbench-claude-sonnet-5, kbench-gemini-flash,
+# kbench-gemini-flash-lite, kbench-gpt-oss-120b, kbench-gpt-nano,
+# kbench-deepseek-r1, kbench-qwen3-next, kbench-granite. These are plain
+# BURST_MODEL passthroughs (no Kaggle session start/stop here); claude-burst
+# recognizes the kbench-* prefix and skips the llm-burst GPU-registry
+# validation/context-window override for them. The model_list entries live
+# in /root/projects/pardalos/deploy/litellm-free.yaml, pointed at
+# MODEL_PROXY_OPENAPI_URL/MODEL_PROXY_API_KEY in .env.local. That proxy
+# token is short-lived (~1-2h): refresh with
+# `kaggle benchmarks auth -y --env-file /root/.config/kbench/proxy.env` then
+# `systemctl restart pardalos-freeproxy.service` before a run that might
+# outlast it. The restricted default-local token only reaches the 8 models
+# above (see LLMS_AVAILABLE in proxy.env), not the full
+# `kaggle benchmarks tasks models` catalog.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 

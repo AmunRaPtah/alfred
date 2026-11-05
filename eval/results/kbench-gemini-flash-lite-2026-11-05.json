@@ -1,0 +1,35 @@
+{
+  "backend": "kbench-gemini-flash-lite",
+  "burst_model": "kbench-gemini-flash-lite",
+  "date_utc": "2026-11-05",
+  "partial": false,
+  "suite_wall_time_s": 22.6,
+  "n_tasks": 2,
+  "n_passed": 2,
+  "results": [
+    {
+      "id": "tool_create_files",
+      "category": "tool_use",
+      "passed": true,
+      "detail": "all three files correct",
+      "wall_time_s": 12.3,
+      "num_turns": 4,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "/root/projects/alfred/server/alfred-system.md"
+    },
+    {
+      "id": "instr_json_only",
+      "category": "instruction",
+      "passed": true,
+      "detail": "valid schema-conformant JSON, no extra text",
+      "wall_time_s": 10.2,
+      "num_turns": 1,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "/root/projects/alfred/server/alfred-system.md"
+    }
+  ]
+}
