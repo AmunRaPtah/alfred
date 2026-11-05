@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 import httpx
 
-from . import adapters, config, db, memory, outbox, push, reaper, sessionio, voice
+from . import adapters, autocapture, config, db, memory, outbox, push, reaper, sessionio, voice
 from .harnesses import get_harnesses
 from .idgen import new_id
 
@@ -127,6 +127,7 @@ def on_startup():
     db.init_db()
     reaper.start_background()
     start_pusher_background()
+    autocapture.start_background()
     # Reconcile: any session claiming to be alive but with no tmux session
     # behind it (e.g. the box rebooted) is marked exited.
     if not config.SESSIONS_DIR.exists():

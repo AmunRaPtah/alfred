@@ -26,6 +26,18 @@ ALFRED_RUNNER = str(Path(__file__).resolve().parent.parent / "alfred-runner")
 # Default there is http://127.0.0.1:8193.
 ALFRED_TPU_URL = os.environ.get("ALFRED_TPU_URL")
 
+# Cross-session memory auto-capture (server/alfredd/autocapture.py): on by
+# default, disable with ALFRED_AUTOCAPTURE=0. Uses the local LiteLLM proxy
+# (same one voice.py's litellm-deepseek-v4-flash backend talks to); that
+# proxy accepts any bearer token locally, so "sk-none" matches voice.json.
+AUTOCAPTURE_ENABLED = os.environ.get("ALFRED_AUTOCAPTURE", "1") != "0"
+AUTOCAPTURE_URL = os.environ.get("ALFRED_AUTOCAPTURE_URL", "http://127.0.0.1:4000/v1/chat/completions")
+AUTOCAPTURE_MODEL = os.environ.get("ALFRED_AUTOCAPTURE_MODEL", "kbench-gemini-flash-lite")
+AUTOCAPTURE_KEY = os.environ.get("ALFRED_AUTOCAPTURE_KEY", "sk-none")
+AUTOCAPTURE_IDLE_SECONDS = 600  # a session is "idle" 10 minutes after its last update
+AUTOCAPTURE_INTERVAL_SECONDS = 300  # periodic sweep cadence
+AUTOCAPTURE_MAX_INPUT_CHARS = 6000  # cap on transcript text sent to the extraction model
+
 
 def ensure_dirs():
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
