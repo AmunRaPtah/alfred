@@ -80,6 +80,11 @@ def _send_telegram(title: str, body: str) -> bool:
     try:
         r = httpx.post(url, json={"chat_id": cfg["chat_id"], "text": text,
                                    "parse_mode": "Markdown"}, timeout=10)
+        if r.status_code == 400:
+            # Legacy Markdown rejects unpaired _ or * (e.g. "bm_george");
+            # resend as plain text rather than dropping the message.
+            plain = f"{title}\n{body}" if title else body
+            r = httpx.post(url, json={"chat_id": cfg["chat_id"], "text": plain}, timeout=10)
         return r.status_code == 200 and r.json().get("ok", False)
     except Exception:
         return False

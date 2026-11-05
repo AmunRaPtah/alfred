@@ -48,6 +48,35 @@ def test_notify_falls_back_to_telegram(client, auth_headers, monkeypatch):
     config.TELEGRAM_CONFIG_FILE.unlink()
 
 
+def test_telegram_resends_plain_text_when_markdown_rejected(client, auth_headers, monkeypatch):
+    cfg = {"bot_token": "123:FAKE", "chat_id": "7003237201"}
+    config.TELEGRAM_CONFIG_FILE.write_text(json.dumps(cfg))
+
+    calls = []
+
+    class _Resp:
+        def __init__(self, code):
+            self.status_code = code
+
+        def json(self):
+            return {"ok": self.status_code == 200}
+
+    def fake_post(url, json=None, timeout=None):
+        calls.append(json)
+        return _Resp(400 if "parse_mode" in json else 200)
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    r = client.post("/notify", json={"title": "Voice", "body": "default is bm_george"},
+                     headers=auth_headers)
+    assert r.json()["sent"] == 1
+    assert len(calls) == 2
+    assert "parse_mode" not in calls[1]
+    assert calls[1]["text"] == "Voice\ndefault is bm_george"
+
+    config.TELEGRAM_CONFIG_FILE.unlink()
+
+
 def test_push_status_reports_telegram_channel(client, auth_headers):
     cfg = {"bot_token": "123:FAKE", "chat_id": "7003237201"}
     config.TELEGRAM_CONFIG_FILE.write_text(json.dumps(cfg))
