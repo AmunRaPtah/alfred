@@ -55,12 +55,24 @@ jobs:
         run: grep -E 'error:' "$RUNNER_TEMP/xcodebuild.log" | sort -u | head -100 || true
 
       - name: Package .app into .ipa
+        env:
+          ALFRED_URL: https://alfred.178-18-250-254.sslip.io
+          ALFRED_TOKEN: ${{ secrets.ALFRED_TOKEN }}
+          ALFRED_P12_B64: ${{ secrets.ALFRED_P12_B64 }}
+          ALFRED_P12_PASS: ${{ secrets.ALFRED_P12_PASS }}
         run: |
           cd "$RUNNER_TEMP"
           APP=$(find dd/Build/Products -maxdepth 2 -name 'Alfred.app' -path '*Release-iphoneos*' | head -1)
           test -n "$APP" || { echo "No .app found"; find dd/Build/Products -name '*.app'; exit 1; }
           rm -rf Payload && mkdir -p Payload
           cp -R "$APP" Payload/
+          # Private build: provision URL, token and mTLS cert from repo secrets.
+          # Such an IPA carries a private key, so it is never published (see below).
+          if [ -n "$ALFRED_P12_B64" ]; then
+            python3 -c 'import json,os; json.dump({"url":os.environ["ALFRED_URL"],"token":os.environ["ALFRED_TOKEN"],"p12_b64":os.environ["ALFRED_P12_B64"],"p12_pass":os.environ["ALFRED_P12_PASS"]}, open("Payload/Alfred.app/embedded.json","w"))'
+            echo "PRIVATE_BUILD=1" >> "$GITHUB_ENV"
+            echo "Embedded private config"
+          fi
           zip -qry Alfred.ipa Payload
           ls -lh Alfred.ipa
 
@@ -69,8 +81,10 @@ jobs:
           name: Alfred-ipa
           path: ${{ runner.temp }}/Alfred.ipa
           if-no-files-found: error
+          retention-days: 1
 
       - name: Publish release "latest"
+        if: env.PRIVATE_BUILD != '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

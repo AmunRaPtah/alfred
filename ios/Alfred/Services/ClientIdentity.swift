@@ -54,6 +54,9 @@ enum ClientIdentity {
             if let data = Keychain.readData(p12Account), let pass = Keychain.read(passAccount) {
                 cached = try? decode(data, password: pass)
             }
+            if cached == nil, let e = EmbeddedConfig.shared, let data = e.p12Data {
+                cached = try? decode(data, password: e.p12_pass ?? "")
+            }
         }
         return cached
     }

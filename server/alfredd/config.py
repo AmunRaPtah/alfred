@@ -21,7 +21,8 @@ BIND_PORT = 3341
 ALFRED_RUNNER = str(Path(__file__).resolve().parent.parent / "alfred-runner")
 
 # Kaggle TPU (qwen122-tpu) tunnel base URL. alfred-brain health-checks it and
-# uses the TPU model when it answers, else falls back to kqwen on the T4.
+# uses the TPU model when it answers; otherwise the brain is off (no T4
+# fallback, to spare Kaggle GPU quota; ALFRED_ALLOW_T4=1 re-enables it).
 # Default there is http://127.0.0.1:8193.
 ALFRED_TPU_URL = os.environ.get("ALFRED_TPU_URL")
 

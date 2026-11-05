@@ -3,18 +3,31 @@ import Foundation
 /// Server URL (UserDefaults) and bearer token (Keychain). Alfred's own
 /// namespacing so it never collides with Helm on the same phone.
 struct ServerConfig: Equatable {
-    static let defaultURL = "http://10.66.66.1:3341"
+    static let defaultURL = "https://alfred.178-18-250-254.sslip.io"
     private static let urlKey = "alfred.serverURL"
     private static let tokenAccount = "alfred.token"
 
     var urlString: String
     var token: String
 
+    private static let embeddedAppliedKey = "alfred.embeddedApplied"
+
     static func load() -> ServerConfig {
-        ServerConfig(
+        applyEmbeddedOnce()
+        return ServerConfig(
             urlString: UserDefaults.standard.string(forKey: urlKey) ?? defaultURL,
             token: Keychain.read(tokenAccount) ?? ""
         )
+    }
+
+    /// A private build ships its URL and token; write them once so the app
+    /// works on first launch, after which Settings edits win.
+    private static func applyEmbeddedOnce() {
+        guard let e = EmbeddedConfig.shared,
+              !UserDefaults.standard.bool(forKey: embeddedAppliedKey) else { return }
+        if let u = e.url, !u.isEmpty { UserDefaults.standard.set(u, forKey: urlKey) }
+        if let t = e.token, !t.isEmpty { Keychain.write(t, account: tokenAccount) }
+        UserDefaults.standard.set(true, forKey: embeddedAppliedKey)
     }
 
     func save() {
