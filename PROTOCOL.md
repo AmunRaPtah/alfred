@@ -29,6 +29,9 @@ cert) and the session/event/WebSocket model unchanged, except where noted.
 | GET | `/outbox?status=` | | `{outbox:[OutboxItem]}` |
 | POST | `/outbox/{id}/approve` | | `OutboxItem` (status `"sent"` or `"failed"`); 403 unless the request carries `X-Alfred-Route: public` or comes from a wg0 client other than 127.0.0.1/10.66.66.1; see below |
 | POST | `/outbox/{id}/reject` | | `OutboxItem` (status `"rejected"`) |
+| POST | `/voice/turn` | `{session_id, text, voice?}` | `text/event-stream` (SSE), see "Voice turns" below; 404 if the session doesn't exist |
+| POST | `/tts` | `{text, voice?, engine?, speed?}` | `audio/mpeg` bytes, proxied to the TTS service; 502 `{detail:{error, upstream?}}` if it is down or errors, 503 if `~/.alfred/tts.json` is missing |
+| GET | `/tts/voices` | | `{engines:{"kokoro":[...], "pocket":[...]}, default_engine, default_voice}`; 502 if the TTS service is down |
 
 `fire_at` is ISO-8601 UTC (`2026-11-05T09:00:00Z`).
 
@@ -66,3 +69,34 @@ directly). On approval, alfredd sends via Gmail SMTP
 never cached to disk, never `work@supercriticalbooks.com`).
 `OutboxItem` = `{id, kind, recipient, subject, body, attachments:[path],
 status:"pending"|"sent"|"rejected"|"failed", created, decided?, sent?, error?}`.
+
+**Voice turns** (`POST /voice/turn`): a fast spoken reply that skips the
+harness. alfredd builds a short spoken-style Alfred system prompt (1-3 short
+sentences, no markdown), adds `MEMORY.md` and the last 10 user/assistant text
+events of the session, and streams an OpenAI-compatible `/chat/completions`
+(stream=true, max_tokens 300) from the first working backend in
+`~/.alfred/voice.json` = `{"backends":[{"name","url","model","key"|"key_file","health"?}]}`.
+Backends are tried in order: one whose `health` URL doesn't answer 200 within
+1.5 s is skipped, and one that errors before its first token falls through to
+the next. `<think>...</think>` reasoning is stripped. If the model needs tools
+it ends its reply with `[[ACT: <task>]]`; the tag is never spoken, and `task`
+is queued to the session's harness exactly like `POST /sessions/{id}/messages`.
+The exchange is appended to the session's events as ordinary `user` and
+`assistant` events with `"source":"voice"` (assistant also carries `backend`
+and `action`), recorded before any hand-off so the transcript reads in order.
+Since the owner already heard the reply, the auto-push marker is advanced past
+it (unless an earlier harness turn was still waiting to be pushed).
+
+SSE events, each `event: <name>\ndata: <json>\n\n`:
+
+| event | data | when |
+|---|---|---|
+| `sentence` | `{text}` | each complete sentence, as soon as it has streamed (split on `.`/`!`/`?` + whitespace, common abbreviations kept together); the final partial sentence is flushed at the end |
+| `action` | `{task, queued:bool}` | reply had `[[ACT: task]]`; preceded by the sentence "On it, I'll tell you when it's done." when `queued` is true |
+| `done` | `{text, backend, action:str\|null, warnings?:[str]}` | last event on success; `text` is the full spoken reply; `warnings` lists skipped backends or a mid-stream break |
+| `error` | `{error}` | no backend produced any output (the only event sent) |
+
+`/tts` sends `POST {url}/tts` with `{text, voice, engine, speed, format:"mp3"}`
+and header `X-Alfred-Key`, using `~/.alfred/tts.json` =
+`{"url","key","default_engine","default_voice"}` for defaults (speed defaults
+to 1.0), 20 s timeout. `/tts/voices` proxies `GET {url}/voices`.

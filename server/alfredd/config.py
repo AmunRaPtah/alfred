@@ -10,16 +10,19 @@ APNS_CONFIG_FILE = ALFRED_HOME / "apns.json"
 TELEGRAM_CONFIG_FILE = ALFRED_HOME / "telegram.json"
 MEMORY_FILE = ALFRED_HOME / "MEMORY.md"
 MEMORY_MAX_CHARS = 4000
+# Fast voice turns (POST /voice/turn): ordered OpenAI-compatible backends.
+VOICE_CONFIG_FILE = ALFRED_HOME / "voice.json"
+# TTS proxy (POST /tts, GET /tts/voices): {"url","key","default_engine","default_voice"}.
+TTS_CONFIG_FILE = ALFRED_HOME / "tts.json"
 
 BIND_HOST = "10.66.66.1"
 BIND_PORT = 3341
 
 ALFRED_RUNNER = str(Path(__file__).resolve().parent.parent / "alfred-runner")
 
-# Hook for a future on-box TPU inference endpoint. Unused today: alfred-brain
-# always runs against the Kaggle-hosted abliterated Qwen3.8-27B via
-# claude-burst. Once a TPU endpoint exists, alfred-brain will prefer it when
-# this is set.
+# Kaggle TPU (qwen122-tpu) tunnel base URL. alfred-brain health-checks it and
+# uses the TPU model when it answers, else falls back to kqwen on the T4.
+# Default there is http://127.0.0.1:8193.
 ALFRED_TPU_URL = os.environ.get("ALFRED_TPU_URL")
 
 

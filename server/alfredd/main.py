@@ -10,10 +10,13 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from pydantic import BaseModel
 
-from . import adapters, config, db, memory, outbox, push, reaper, sessionio
+import httpx
+
+from . import adapters, config, db, memory, outbox, push, reaper, sessionio, voice
 from .harnesses import get_harnesses
 from .idgen import new_id
 
@@ -251,12 +254,17 @@ async def post_message(sid: str, request: Request, authorization: Optional[str] 
     check_auth(authorization)
     meta = _require_session(sid)
     body = await request.json()
-    ok = await asyncio.get_event_loop().run_in_executor(
-        None, sessionio.write_inbox, sid, _message_op(body))
-    if not ok:
+    if not await _queue_message(sid, body):
         raise HTTPException(503, "runner not accepting input")
     # Messages sent mid-turn are queued by the runner, not rejected.
     return {"ok": True, "queued": meta.get("state") == "running" or bool(meta.get("queue"))}
+
+
+async def _queue_message(sid: str, body: dict) -> bool:
+    """Hands one user message to the session's runner via its inbox FIFO.
+    Shared by POST /sessions/{sid}/messages and voice-turn [[ACT]] hand-offs."""
+    return await asyncio.get_event_loop().run_in_executor(
+        None, sessionio.write_inbox, sid, _message_op(body))
 
 
 def _message_op(body: dict) -> dict:
@@ -524,6 +532,165 @@ def reject_outbox(oid: str, authorization: Optional[str] = Header(None)):
     if item["status"] != "pending":
         raise HTTPException(409, f"outbox item is {item['status']}, not pending")
     return db.set_outbox_status(oid, "rejected")
+
+
+# ---------- voice: fast spoken turns + TTS proxy (Alfred protocol addition) ----------
+
+class VoiceTurnBody(BaseModel):
+    session_id: str
+    text: str
+    voice: Optional[str] = None
+
+
+def _record_voice_exchange(sid: str, user_text: str, reply: str, backend: str,
+                           action: Optional[str]) -> None:
+    """Appends the exchange as ordinary user/assistant events (tagged
+    source:"voice") so the chat transcript and later voice turns see it. The
+    owner already heard the reply, so the auto-push marker is advanced too,
+    unless an earlier harness turn was still waiting to be pushed."""
+    before = sessionio.read_meta(sid) or {}
+    pending_push = before.get("last_seq", 0) > before.get("push_seq", 0)
+    sessionio.append_event(sid, {"type": "user", "text": user_text, "attachments": [],
+                                 "source": "voice"})
+    ev = sessionio.append_event(sid, {"type": "assistant", "msg_id": f"voice-{int(time.time() * 1000)}",
+                                      "text": reply, "source": "voice", "backend": backend,
+                                      "action": action})
+    if not pending_push:
+        sessionio.update_meta(sid, push_seq=ev["seq"])
+
+
+@app.post("/voice/turn")
+async def voice_turn(body: VoiceTurnBody, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    sid = body.session_id
+    _require_session(sid)
+    user_text = body.text.strip()
+    if not user_text:
+        raise HTTPException(400, "empty text")
+    messages = voice.build_messages(sid, user_text)
+
+    async def gen():
+        raw, backend, errors = "", None, []
+        splitter = voice.SentenceSplitter()
+        spoken = []
+        try:
+            async for name, tok in voice.stream_reply(messages, errors):
+                backend = name
+                raw += tok
+                for s in splitter.feed(voice.visible_text(raw)):
+                    spoken.append(s)
+                    yield voice.sse("sentence", {"text": s})
+        except voice.NoBackend as e:
+            yield voice.sse("error", {"error": f"no voice backend answered: {e}"})
+            return
+        except Exception as e:
+            # Failed mid-reply: keep what was already said, note the cut.
+            errors.append(f"{backend}: stream broke: {e.__class__.__name__}: {e}"[:300])
+        for s in splitter.flush(voice.visible_text(raw)):
+            spoken.append(s)
+            yield voice.sse("sentence", {"text": s})
+
+        task = voice.find_action(raw)
+        full = voice.tidy(" ".join(spoken))
+        # Record before handing off, so the transcript reads voice question,
+        # spoken acknowledgement, then the harness's own turn on the task.
+        try:
+            _record_voice_exchange(sid, user_text,
+                                   voice.tidy(f"{full} {voice.ACK_SENTENCE}") if task else full,
+                                   backend or "", task)
+        except Exception:
+            pass
+        if task:
+            queued = await _queue_message(sid, {"text": task})
+            if queued:
+                full = voice.tidy(f"{full} {voice.ACK_SENTENCE}")
+                yield voice.sse("sentence", {"text": voice.ACK_SENTENCE})
+            else:
+                try:
+                    sessionio.append_event(sid, {"type": "error",
+                                                 "text": "voice hand-off failed: runner not accepting input"})
+                except Exception:
+                    pass
+            yield voice.sse("action", {"task": task, "queued": queued})
+
+        done = {"text": full, "backend": backend, "action": task}
+        if errors and backend:
+            done["warnings"] = errors
+        yield voice.sse("done", done)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
+
+
+class TtsBody(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    engine: Optional[str] = None
+    speed: Optional[float] = None
+
+
+TTS_TIMEOUT = 20.0
+
+
+def _tts_config() -> dict:
+    p = config.TTS_CONFIG_FILE
+    try:
+        cfg = json.loads(p.read_text())
+    except (OSError, ValueError):
+        raise HTTPException(503, "tts not configured (~/.alfred/tts.json)")
+    if not cfg.get("url"):
+        raise HTTPException(503, "tts.json has no url")
+    return cfg
+
+
+def _tts_headers(cfg: dict) -> dict:
+    return {"X-Alfred-Key": cfg["key"]} if cfg.get("key") else {}
+
+
+def _upstream_error(what: str, e: Exception = None, r: httpx.Response = None) -> JSONResponse:
+    if r is not None:
+        detail = {"error": f"tts upstream {what} returned HTTP {r.status_code}",
+                  "upstream": r.text[:300]}
+    else:
+        detail = {"error": f"tts upstream {what} unreachable: {e.__class__.__name__}: {e}"[:300]}
+    return JSONResponse({"detail": detail}, status_code=502)
+
+
+@app.post("/tts")
+async def tts(body: TtsBody, authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    if not body.text.strip():
+        raise HTTPException(400, "empty text")
+    cfg = _tts_config()
+    payload = {"text": body.text,
+               "voice": body.voice or cfg.get("default_voice"),
+               "engine": body.engine or cfg.get("default_engine"),
+               "speed": body.speed if body.speed is not None else 1.0,
+               "format": "mp3"}
+    try:
+        async with voice.http_client(httpx.Timeout(TTS_TIMEOUT)) as c:
+            r = await c.post(cfg["url"].rstrip("/") + "/tts", json=payload, headers=_tts_headers(cfg))
+    except Exception as e:
+        return _upstream_error("/tts", e=e)
+    if r.status_code != 200:
+        return _upstream_error("/tts", r=r)
+    return Response(r.content, media_type="audio/mpeg")
+
+
+@app.get("/tts/voices")
+async def tts_voices(authorization: Optional[str] = Header(None)):
+    check_auth(authorization)
+    cfg = _tts_config()
+    try:
+        async with voice.http_client(httpx.Timeout(TTS_TIMEOUT)) as c:
+            r = await c.get(cfg["url"].rstrip("/") + "/voices", headers=_tts_headers(cfg))
+        if r.status_code != 200:
+            return _upstream_error("/voices", r=r)
+        engines = r.json()
+    except Exception as e:
+        return _upstream_error("/voices", e=e)
+    return {"engines": engines, "default_engine": cfg.get("default_engine"),
+            "default_voice": cfg.get("default_voice")}
 
 
 # ---------- WebSocket ----------
