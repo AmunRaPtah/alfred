@@ -3,10 +3,15 @@ import Observation
 import Speech
 
 /// Drives Alfred's live voice mode: SFSpeechRecognizer + AVAudioEngine for
-/// listening, AVSpeechSynthesizer for speaking the streamed reply back.
-/// Entirely on-device plumbing; the session/text transport is unchanged
-/// (VoiceModeView still sends over ChatModel/SessionStream). Barge-in and
-/// think-tag stripping live here so the view stays a thin status display.
+/// listening, then one of two reply paths:
+/// - server turn (preferred): POST /voice/turn streams sentences over SSE;
+///   each is spoken with server TTS (/tts, AVAudioPlayer, next sentence
+///   prefetched while the current one plays), falling back per sentence to
+///   AVSpeechSynthesizer when /tts fails or takes longer than 4 s.
+/// - transcript (fallback, when /voice/turn fails): VoiceModeView sends over
+///   ChatModel/SessionStream and feeds the streamed reply to `speakDelta`.
+/// Barge-in and think-tag stripping live here so the view stays a thin
+/// status display.
 @Observable
 @MainActor
 final class VoiceEngine {
@@ -22,6 +27,11 @@ final class VoiceEngine {
     private(set) var phase: Phase = .idle
     private(set) var liveTranscript = ""
     private(set) var isOnDevice = false
+    /// Set when the server reports an `action` (a harness task was queued).
+    private(set) var queuedTask: String?
+    /// False while a /voice/turn reply is being spoken; VoiceModeView must
+    /// then not also speak the session transcript.
+    private(set) var transcriptDrivesSpeech = true
 
     var settings: VoiceSettings
     /// Fired with a finalized user utterance, ready to send.
@@ -47,6 +57,22 @@ final class VoiceEngine {
     @ObservationIgnored private var pendingSpeech = ""
     @ObservationIgnored private var codeFenceOpen = false
 
+    // Server-turn state (/voice/turn + /tts).
+    private struct Segment {
+        var text: String
+        var audio: Task<Data?, Never>?
+    }
+    @ObservationIgnored private var turnTask: Task<Void, Never>?
+    @ObservationIgnored private var turnGeneration = 0
+    @ObservationIgnored private var serverAPI: APIClient?
+    @ObservationIgnored private var segments: [Segment] = []
+    @ObservationIgnored private var segmentPlaying = false
+    @ObservationIgnored private var synthSegmentActive = false
+    @ObservationIgnored private var player: AVAudioPlayer?
+    @ObservationIgnored private var playerDelegate: PlayerDelegate?
+
+    private static let ttsTimeoutNanos: UInt64 = 4_000_000_000
+
     private static let bargeInThreshold: Float = 0.035
 
     init(settings: VoiceSettings) {
@@ -71,6 +97,7 @@ final class VoiceEngine {
             synthDelegate = d
             synthesizer.delegate = d
         }
+        if playerDelegate == nil { playerDelegate = PlayerDelegate(engine: self) }
         do {
             try activateSession()
         } catch {
@@ -81,6 +108,7 @@ final class VoiceEngine {
     }
 
     func stop() {
+        cancelServerTurn()
         silenceTimer?.cancel(); silenceTimer = nil
         recognitionTask?.cancel(); recognitionTask = nil
         request?.endAudio(); request = nil
@@ -98,11 +126,13 @@ final class VoiceEngine {
 
     /// Barge-in / stop button: cut Alfred off and go back to listening.
     func interrupt() {
+        let wasServerTurn = turnTask != nil
+        cancelServerTurn()
         synthesizer.stopSpeaking(at: .immediate)
         pendingUtterances = 0
         resetSpeechBuffer()
         finalReceived = false
-        if phase == .speaking { beginListening() }
+        if phase == .speaking || (wasServerTurn && phase == .thinking) { beginListening() }
     }
 
     // MARK: Permissions
@@ -153,6 +183,7 @@ final class VoiceEngine {
         switch type {
         case .began:
             synthesizer.pauseSpeaking(at: .immediate)
+            player?.pause()
             if audioEngine.isRunning { audioEngine.pause() }
         case .ended:
             let shouldResume = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
@@ -161,6 +192,7 @@ final class VoiceEngine {
             try? AVAudioSession.sharedInstance().setActive(true)
             try? audioEngine.start()
             synthesizer.continueSpeaking()
+            player?.play()
         @unknown default:
             break
         }
@@ -300,18 +332,27 @@ final class VoiceEngine {
         guard !utterances.isEmpty else { return }
         if phase == .thinking { phase = .speaking }
         for text in utterances {
-            let utterance = AVSpeechUtterance(string: text)
-            utterance.rate = settings.rate
-            if let id = settings.voiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: id) {
-                utterance.voice = voice
-            }
             pendingUtterances += 1
-            synthesizer.speak(utterance)
+            synthesizer.speak(makeUtterance(text))
         }
+    }
+
+    private func makeUtterance(_ text: String) -> AVSpeechUtterance {
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.rate = settings.rate
+        if let id = settings.voiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: id) {
+            utterance.voice = voice
+        }
+        return utterance
     }
 
     fileprivate func utteranceDone() {
         pendingUtterances = max(0, pendingUtterances - 1)
+        if synthSegmentActive {
+            synthSegmentActive = false
+            segmentFinished()
+            return
+        }
         maybeResumeListening()
     }
 
@@ -330,6 +371,156 @@ final class VoiceEngine {
         visibleConsumedCount = 0
         pendingSpeech = ""
         codeFenceOpen = false
+    }
+
+    // MARK: Server turn (/voice/turn + /tts)
+
+    /// Runs the finalized utterance through POST /voice/turn and speaks each
+    /// streamed sentence in order. If the endpoint fails before sending
+    /// anything, switches back to transcript-driven speech and calls
+    /// `fallback` (the plain session-message path).
+    func runServerTurn(_ text: String, api: APIClient, sessionId: String,
+                       fallback: @escaping @MainActor () async -> Void) {
+        cancelServerTurn()
+        turnGeneration += 1
+        let gen = turnGeneration
+        serverAPI = api
+        queuedTask = nil
+        finalReceived = false
+        transcriptDrivesSpeech = false
+        let voice = settings.useServerVoice ? settings.serverVoice : nil
+        turnTask = Task { [weak self] in
+            var gotAnything = false
+            var failed = false
+            do {
+                for try await event in api.voiceTurn(sessionId: sessionId, text: text, voice: voice) {
+                    guard let self, gen == self.turnGeneration else { return }
+                    switch event.name {
+                    case "sentence":
+                        gotAnything = true
+                        if let s = event.data["text"]?.string { self.enqueueSegment(s) }
+                    case "action":
+                        gotAnything = true
+                        self.queuedTask = event.data["task"]?.string ?? "Task"
+                    case "done":
+                        gotAnything = true
+                    case "error":
+                        if !gotAnything { failed = true }
+                    default:
+                        break
+                    }
+                    if event.name == "done" || event.name == "error" { break }
+                }
+            } catch {
+                if error is CancellationError { return }
+                if !gotAnything { failed = true }
+            }
+            guard let self, gen == self.turnGeneration else { return }
+            self.turnTask = nil
+            if failed {
+                self.transcriptDrivesSpeech = true
+                await fallback()
+            } else {
+                self.finalReceived = true
+                self.maybeFinishServerTurn()
+            }
+        }
+    }
+
+    private func cancelServerTurn() {
+        turnGeneration += 1
+        turnTask?.cancel(); turnTask = nil
+        for seg in segments { seg.audio?.cancel() }
+        segments = []
+        player?.stop(); player = nil
+        segmentPlaying = false
+        synthSegmentActive = false
+    }
+
+    private func enqueueSegment(_ raw: String) {
+        guard let text = Self.sanitize(raw) else { return }
+        if phase == .thinking { phase = .speaking }
+        segments.append(Segment(text: text, audio: nil))
+        if segmentPlaying { prefetchNext() } else { playNextSegment() }
+    }
+
+    /// Starts fetching audio for the next queued sentence, so it is ready by
+    /// the time the current one finishes.
+    private func prefetchNext() {
+        guard settings.useServerVoice, !segments.isEmpty, segments[0].audio == nil else { return }
+        segments[0].audio = fetchAudio(segments[0].text)
+    }
+
+    /// Resolves to the mp3 bytes, or nil if /tts failed or missed the 4 s budget.
+    private func fetchAudio(_ text: String) -> Task<Data?, Never>? {
+        guard let api = serverAPI else { return nil }
+        let engine = settings.serverEngine
+        let voice = settings.serverVoice
+        let timeout = Self.ttsTimeoutNanos
+        return Task {
+            await withTaskGroup(of: Data?.self) { group in
+                group.addTask { try? await api.tts(text: text, voice: voice, engine: engine) }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: timeout)
+                    return nil
+                }
+                var result: Data?
+                if let first = await group.next() { result = first }
+                group.cancelAll()
+                return result
+            }
+        }
+    }
+
+    private func playNextSegment() {
+        guard !segmentPlaying else { return }
+        guard !segments.isEmpty else { maybeFinishServerTurn(); return }
+        var seg = segments.removeFirst()
+        segmentPlaying = true
+        if seg.audio == nil, settings.useServerVoice { seg.audio = fetchAudio(seg.text) }
+        prefetchNext()
+        let gen = turnGeneration
+        let text = seg.text
+        let audio = seg.audio
+        Task { [weak self] in
+            let data = await audio?.value
+            guard let self, gen == self.turnGeneration else { return }
+            self.playSegment(text, data: data)
+        }
+    }
+
+    private func playSegment(_ text: String, data: Data?) {
+        if let data, let p = try? AVAudioPlayer(data: data, fileTypeHint: AVFileType.mp3.rawValue) {
+            p.delegate = playerDelegate
+            player = p
+            if p.play() { return }
+            player = nil
+        }
+        // Server TTS unavailable or too slow for this sentence: on-device voice.
+        synthSegmentActive = true
+        pendingUtterances += 1
+        synthesizer.speak(makeUtterance(text))
+    }
+
+    fileprivate func playerFinished(_ p: AVAudioPlayer) {
+        guard p === player else { return }
+        segmentFinished()
+    }
+
+    private func segmentFinished() {
+        player = nil
+        segmentPlaying = false
+        playNextSegment()
+    }
+
+    private func maybeFinishServerTurn() {
+        guard !transcriptDrivesSpeech, finalReceived, segments.isEmpty, !segmentPlaying else { return }
+        guard phase == .speaking || phase == .thinking else { return }
+        if settings.autoListen {
+            beginListening()
+        } else {
+            phase = .idle
+        }
     }
 
     // MARK: Text processing
@@ -399,5 +590,20 @@ private final class SynthDelegate: NSObject, AVSpeechSynthesizerDelegate {
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor [weak engine] in engine?.utteranceDone() }
+    }
+}
+
+/// AVAudioPlayerDelegate for server-TTS sentences; forwards completion (or a
+/// decode error, treated the same) back onto the engine on the main actor.
+private final class PlayerDelegate: NSObject, AVAudioPlayerDelegate {
+    weak var engine: VoiceEngine?
+    init(engine: VoiceEngine) { self.engine = engine }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak engine] in engine?.playerFinished(player) }
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor [weak engine] in engine?.playerFinished(player) }
     }
 }

@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// Full-screen live voice conversation with Alfred: listens, shows a live
-/// transcript, sends the utterance over the existing session stream, and
-/// speaks the reply back as it streams in. All orchestration lives in
-/// VoiceEngine; this view is just status + controls.
+/// transcript, sends the utterance through POST /voice/turn (or, if that
+/// fails, over the existing session stream), and speaks the reply back as it
+/// streams in. All orchestration lives in VoiceEngine; this view is just
+/// status + controls.
 struct VoiceModeView: View {
     @Bindable var model: ChatModel
     @Environment(\.dismiss) private var dismiss
@@ -45,6 +46,16 @@ struct VoiceModeView: View {
                 .frame(minHeight: 60)
                 .animation(.easeOut(duration: 0.15), value: transcriptText)
 
+            if voice.queuedTask != nil {
+                Label("Task queued", systemImage: "checklist")
+                    .font(AlfredFont.ui(13, weight: .medium))
+                    .foregroundStyle(AlfredPalette.brass)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(AlfredPalette.slate.opacity(0.7), in: Capsule())
+                    .accessibilityLabel("Task queued: \(voice.queuedTask ?? "")")
+            }
+
             Spacer()
 
             controls
@@ -53,7 +64,11 @@ struct VoiceModeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AlfredBackground())
         .onAppear {
-            voice.onUtterance = { text in Task { await model.sendVoice(text) } }
+            voice.onUtterance = { text in
+                voice.runServerTurn(text, api: model.api, sessionId: model.session.id) {
+                    await model.sendVoice(text)
+                }
+            }
             Task { await voice.start() }
         }
         .onDisappear { voice.stop() }
@@ -175,14 +190,17 @@ struct VoiceModeView: View {
             lastAssistantId = last.id
             lastAssistantLength = 0
         }
+        // While a /voice/turn reply is being spoken, the same reply may also
+        // land in the transcript; keep the bookkeeping but don't speak it twice.
+        let speak = voice.transcriptDrivesSpeech
         if text.count > lastAssistantLength {
             let delta = String(text.dropFirst(lastAssistantLength))
             lastAssistantLength = text.count
-            voice.speakDelta(delta)
+            if speak { voice.speakDelta(delta) }
         }
         if isFinal, !finishedIds.contains(last.id) {
             finishedIds.insert(last.id)
-            voice.finishReply()
+            if speak { voice.finishReply() }
         }
     }
 }

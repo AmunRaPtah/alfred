@@ -15,6 +15,18 @@ struct InboxView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    NavigationLink {
+                        OutboxView()
+                    } label: {
+                        Label("Drafts awaiting approval", systemImage: "envelope.badge")
+                            .font(AlfredFont.ui(15, weight: .medium))
+                            .foregroundStyle(AlfredPalette.parchment)
+                    }
+                    .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                } header: {
+                    Text("Outbox")
+                }
                 if !log.entries.isEmpty {
                     Section("Notifications") {
                         ForEach(log.entries) { entry in

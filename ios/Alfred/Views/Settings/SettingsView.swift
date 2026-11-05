@@ -137,6 +137,7 @@ struct SettingsView: View {
             if !isOnboarding {
                 NotificationsSection()
                 VoiceSection()
+                ServerVoiceSection()
                 Section {
                     LabeledContent("Version", value: Bundle.main.shortVersion)
                     LabeledContent("Protocol", value: "v1")
@@ -331,6 +332,95 @@ private struct VoiceSection: View {
         case .enhanced: return "\(v.name) (Enhanced)"
         case .premium: return "\(v.name) (Premium)"
         default: return v.name
+        }
+    }
+}
+
+/// Server TTS for voice mode (/tts): on/off, engine and voice, populated from
+/// GET /tts/voices. Selections persist in VoiceSettings; nil means the
+/// server's default_engine/default_voice.
+private struct ServerVoiceSection: View {
+    @Environment(AppStore.self) private var store
+    @State private var settings = VoiceSettings.shared
+    @State private var voices: TTSVoices?
+    @State private var loadError: String?
+    @State private var loading = false
+
+    var body: some View {
+        Section {
+            Toggle("Use server voice", isOn: $settings.useServerVoice)
+            if settings.useServerVoice {
+                if let voices, !voices.engines.isEmpty {
+                    Picker("Engine", selection: engineBinding(voices)) {
+                        ForEach(voices.engineNames, id: \.self) { Text($0.capitalized).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    Picker("Server voice", selection: voiceBinding(voices)) {
+                        ForEach(voices.engines[currentEngine(voices)] ?? [], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                } else if loading {
+                    HStack {
+                        Text("Loading voices")
+                        Spacer()
+                        ProgressView()
+                    }
+                } else {
+                    Text(loadError ?? "No server voices available.")
+                        .font(.footnote)
+                        .foregroundStyle(AlfredPalette.caution)
+                    Button("Retry") { Task { await load() } }
+                }
+            }
+        } header: {
+            Text("Server voice")
+        } footer: {
+            Text("Replies are spoken with the server's voice. Any sentence the server can't voice within 4 seconds is read by the on-device voice above instead.")
+        }
+        .task { await load() }
+    }
+
+    private func currentEngine(_ v: TTSVoices) -> String {
+        if let e = settings.serverEngine, v.engines[e] != nil { return e }
+        return v.defaultEngine.flatMap { v.engines[$0] != nil ? $0 : nil } ?? v.engineNames.first ?? ""
+    }
+
+    private func currentVoice(_ v: TTSVoices) -> String {
+        let list = v.engines[currentEngine(v)] ?? []
+        if let s = settings.serverVoice, list.contains(s) { return s }
+        if let d = v.defaultVoice, list.contains(d) { return d }
+        return list.first ?? ""
+    }
+
+    private func engineBinding(_ v: TTSVoices) -> Binding<String> {
+        Binding(get: { currentEngine(v) }, set: { engine in
+            settings.serverEngine = engine
+            let list = v.engines[engine] ?? []
+            if let s = settings.serverVoice, list.contains(s) { return }
+            if let d = v.defaultVoice, list.contains(d) { settings.serverVoice = d } else { settings.serverVoice = list.first }
+        })
+    }
+
+    private func voiceBinding(_ v: TTSVoices) -> Binding<String> {
+        Binding(get: { currentVoice(v) }, set: { voice in
+            settings.serverEngine = currentEngine(v)
+            settings.serverVoice = voice
+        })
+    }
+
+    private func load() async {
+        guard store.config.isConfigured else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            voices = try await store.api.ttsVoices()
+            loadError = nil
+        } catch {
+            if case .http(let code, _)? = error as? APIError, code == 502 || code == 503 || code == 504 {
+                loadError = "TTS host offline. Voice mode will use the on-device voice."
+            } else {
+                loadError = "TTS host offline (\(APIClient.describe(error)))."
+            }
         }
     }
 }

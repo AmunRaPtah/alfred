@@ -16,6 +16,16 @@ struct APIClient {
         return URLSession(configuration: c, delegate: ClientCertDelegate.shared, delegateQueue: nil)
     }()
 
+    /// Long idle timeout for /voice/turn: the first sentence can take a while
+    /// when the brain is thinking, and SSE has no keepalive guarantee.
+    private static let streamSession: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 300
+        c.waitsForConnectivity = false
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: c, delegate: ClientCertDelegate.shared, delegateQueue: nil)
+    }()
+
     // MARK: Sessions
 
     func health() async throws -> JSONValue {
@@ -161,6 +171,138 @@ struct APIClient {
         PushStatus(json: try await request("GET", "/push/status"))
     }
 
+    // MARK: Voice and TTS
+
+    /// One server-sent event from POST /voice/turn: `sentence`, `action`,
+    /// `done` or `error`, with its JSON data payload.
+    struct VoiceTurnEvent {
+        var name: String
+        var data: JSONValue
+    }
+
+    /// POST /voice/turn, parsed incrementally as SSE. The stream finishes
+    /// when the server closes it; cancelling the consumer cancels the request.
+    func voiceTurn(sessionId: String, text: String, voice: String?) -> AsyncThrowingStream<VoiceTurnEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var payload: [String: JSONValue] = ["session_id": .string(sessionId), "text": .string(text)]
+                    if let voice, !voice.isEmpty { payload["voice"] = .string(voice) }
+                    var req = try makeRequest("POST", "/voice/turn", query: [], auth: true)
+                    req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    req.httpBody = try JSONEncoder().encode(JSONValue.object(payload))
+                    let (bytes, resp) = try await Self.streamSession.bytes(for: req)
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    guard (200..<300).contains(code) else {
+                        var body = Data()
+                        for try await b in bytes {
+                            body.append(b)
+                            if body.count > 4096 { break }
+                        }
+                        let msg = JSONValue.parse(body).flatMap { $0["detail"]?.string ?? $0["error"]?.string }
+                            ?? String(data: body, encoding: .utf8) ?? ""
+                        throw APIError.http(code, msg)
+                    }
+                    // Byte-level parse: AsyncBytes.lines drops blank lines,
+                    // which are exactly the SSE event separators.
+                    var line = Data()
+                    var eventName = "message"
+                    var dataLines: [String] = []
+                    func dispatch() {
+                        defer { eventName = "message"; dataLines = [] }
+                        guard !dataLines.isEmpty else { return }
+                        let raw = dataLines.joined(separator: "\n")
+                        let value = JSONValue.parse(Data(raw.utf8)) ?? .string(raw)
+                        continuation.yield(VoiceTurnEvent(name: eventName, data: value))
+                    }
+                    func handle(_ l: String) {
+                        if l.isEmpty { dispatch(); return }
+                        if l.hasPrefix(":") { return }
+                        let field: Substring
+                        var value: Substring
+                        if let colon = l.firstIndex(of: ":") {
+                            field = l[l.startIndex..<colon]
+                            value = l[l.index(after: colon)...]
+                            if value.hasPrefix(" ") { value = value.dropFirst() }
+                        } else {
+                            field = Substring(l)
+                            value = ""
+                        }
+                        switch field {
+                        case "event": eventName = String(value)
+                        case "data": dataLines.append(String(value))
+                        default: break
+                        }
+                    }
+                    for try await b in bytes {
+                        if b == UInt8(ascii: "\n") {
+                            if line.last == UInt8(ascii: "\r") { line.removeLast() }
+                            handle(String(decoding: line, as: UTF8.self))
+                            line.removeAll(keepingCapacity: true)
+                        } else {
+                            line.append(b)
+                        }
+                    }
+                    if !line.isEmpty { handle(String(decoding: line, as: UTF8.self)) }
+                    dispatch()
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
+                } catch let e as URLError where e.code == .cancelled {
+                    continuation.finish(throwing: CancellationError())
+                } catch let e as APIError {
+                    continuation.finish(throwing: e)
+                } catch {
+                    continuation.finish(throwing: APIError.transport(Self.describe(error)))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// POST /tts: synthesized speech as audio/mpeg bytes. 502 when the TTS
+    /// host is down.
+    func tts(text: String, voice: String? = nil, engine: String? = nil, speed: Double? = nil) async throws -> Data {
+        var payload: [String: JSONValue] = ["text": .string(text)]
+        if let voice, !voice.isEmpty { payload["voice"] = .string(voice) }
+        if let engine, !engine.isEmpty { payload["engine"] = .string(engine) }
+        if let speed { payload["speed"] = .number(speed) }
+        var req = try makeRequest("POST", "/tts", query: [], auth: true)
+        req.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let data = try await performRaw(req, body: try JSONEncoder().encode(JSONValue.object(payload)))
+        guard !data.isEmpty else { throw APIError.decoding("empty audio") }
+        return data
+    }
+
+    func ttsVoices() async throws -> TTSVoices {
+        TTSVoices(json: try await request("GET", "/tts/voices"))
+    }
+
+    // MARK: Outbox (PROTOCOL.md "Outbox")
+
+    func outbox(status: String? = "pending") async throws -> [OutboxItem] {
+        let query = status.map { [URLQueryItem(name: "status", value: $0)] } ?? []
+        let v = try await request("GET", "/outbox", query: query)
+        return list(v, key: "outbox").compactMap(OutboxItem.init(json:))
+    }
+
+    /// Really sends the email. alfredd 403s approvals that don't come from
+    /// the app (outbox.py check_approval_allowed); the app marks itself with
+    /// `X-Alfred-Route: public`, which is what that gate accepts.
+    @discardableResult
+    func approveOutbox(id: String) async throws -> OutboxItem? {
+        var req = try makeRequest("POST", "/outbox/\(id)/approve", query: [], auth: true)
+        req.setValue("public", forHTTPHeaderField: "X-Alfred-Route")
+        return OutboxItem(json: try await perform(req, body: nil))
+    }
+
+    @discardableResult
+    func rejectOutbox(id: String) async throws -> OutboxItem? {
+        OutboxItem(json: try await request("POST", "/outbox/\(id)/reject"))
+    }
+
     // MARK: Plumbing
 
     /// Accepts either a bare array or an object wrapping it (tolerant of either shape).
@@ -206,6 +348,12 @@ struct APIClient {
     }
 
     private func perform(_ req: URLRequest, body: Data?) async throws -> JSONValue {
+        let data = try await performRaw(req, body: body)
+        if data.isEmpty { return .null }
+        return JSONValue.parse(data) ?? .string(String(data: data, encoding: .utf8) ?? "")
+    }
+
+    private func performRaw(_ req: URLRequest, body: Data?) async throws -> Data {
         let result: (Data, URLResponse)
         do {
             if let body {
@@ -227,8 +375,7 @@ struct APIClient {
                 ?? String(data: data, encoding: .utf8) ?? ""
             throw APIError.http(code, msg)
         }
-        if data.isEmpty { return .null }
-        return JSONValue.parse(data) ?? .string(String(data: data, encoding: .utf8) ?? "")
+        return data
     }
 
     static func describe(_ error: Error) -> String {
