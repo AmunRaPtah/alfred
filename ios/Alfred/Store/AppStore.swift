@@ -110,8 +110,17 @@ final class AppStore {
     /// Starts a brand new primary conversation, abandoning the old one (used
     /// by Today's "New conversation" action and Inbox's older-thread picker).
     func startNewPrimary() async -> ChatModel? {
-        primarySessionId = nil
-        return await primaryChat()
+        // Create directly: primaryChat() would fall back to the most recent
+        // session and reopen the old conversation instead of starting one.
+        do {
+            let s = try await api.createSession(.init(cwd: Self.defaultWorkspace, permission: PermissionMode.bypass.rawValue, text: nil))
+            upsert(s)
+            primarySessionId = s.id
+            return chat(for: s)
+        } catch {
+            listError = APIClient.describe(error)
+            return nil
+        }
     }
 
     func switchPrimary(to id: String) {

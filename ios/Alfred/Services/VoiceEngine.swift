@@ -7,7 +7,9 @@ import Speech
 /// - server turn (preferred): POST /voice/turn streams sentences over SSE;
 ///   each is spoken with server TTS (/tts, AVAudioPlayer, next sentence
 ///   prefetched while the current one plays), falling back per sentence to
-///   AVSpeechSynthesizer when /tts fails or takes longer than 4 s.
+///   AVSpeechSynthesizer when /tts fails or takes longer than 20 s (Kokoro on
+///   the Kaggle CPU runs ~1-2x slower than real time, so a short budget made
+///   most sentences fall back to the robotic on-device voice).
 /// - transcript (fallback, when /voice/turn fails): VoiceModeView sends over
 ///   ChatModel/SessionStream and feeds the streamed reply to `speakDelta`.
 /// Barge-in and think-tag stripping live here so the view stays a thin
@@ -71,7 +73,7 @@ final class VoiceEngine {
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var playerDelegate: PlayerDelegate?
 
-    private static let ttsTimeoutNanos: UInt64 = 4_000_000_000
+    private static let ttsTimeoutNanos: UInt64 = 20_000_000_000
 
     private static let bargeInThreshold: Float = 0.035
 
@@ -444,14 +446,16 @@ final class VoiceEngine {
         if segmentPlaying { prefetchNext() } else { playNextSegment() }
     }
 
-    /// Starts fetching audio for the next queued sentence, so it is ready by
-    /// the time the current one finishes.
+    /// Starts fetching audio for every queued sentence, so the TTS server is
+    /// never idle while the current one plays.
     private func prefetchNext() {
-        guard settings.useServerVoice, !segments.isEmpty, segments[0].audio == nil else { return }
-        segments[0].audio = fetchAudio(segments[0].text)
+        guard settings.useServerVoice else { return }
+        for i in segments.indices where segments[i].audio == nil {
+            segments[i].audio = fetchAudio(segments[i].text)
+        }
     }
 
-    /// Resolves to the mp3 bytes, or nil if /tts failed or missed the 4 s budget.
+    /// Resolves to the mp3 bytes, or nil if /tts failed or missed the 20 s budget.
     private func fetchAudio(_ text: String) -> Task<Data?, Never>? {
         guard let api = serverAPI else { return nil }
         let engine = settings.serverEngine
