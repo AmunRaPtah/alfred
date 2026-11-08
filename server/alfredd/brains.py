@@ -50,6 +50,18 @@ KERNEL_TTL = 180.0  # both scripts' status take ~50 s and ~14 s CPU together
 PROBE_TIMEOUT = 2.0
 
 DEFAULT = "sonnet"
+# Owner-set default brain, shared with ~/.local/bin/alfred-brain. The TPU watcher
+# writes "tpu" here once qwen122-tpu passes its tool-call smoke test; alfred-brain
+# still falls back to Sonnet whenever the TPU tunnel doesn't answer.
+DEFAULT_FILE = config.ALFRED_HOME / "default-brain"
+
+
+def default_brain() -> str:
+    try:
+        v = DEFAULT_FILE.read_text().strip()
+    except OSError:
+        return DEFAULT
+    return v if v in IDS else DEFAULT
 T4_COLD = "Cold start ~4-10 min on Kaggle 2x T4 and it spends GPU quota; one T4 model runs at a time."
 
 # Order is the order the app shows. kq122 (Qwen3.5-122B on T4) is left out:
@@ -244,6 +256,7 @@ def compute():
     t4_stop, tpu_stop = _flag("stop"), _flag("stop-qwen122")
     t4_job, tpu_job = procs.get("t4"), procs.get("tpu")
 
+    default_id = default_brain()
     brains = []
     for b in CATALOG:
         status, detail = "down", None
@@ -276,10 +289,10 @@ def compute():
         entry = {k: b[k] for k in ("id", "label", "short", "tier", "note")}
         entry.update({"status": status, "detail": detail, "controllable": b["tier"] in ("t4", "tpu"),
                       "kernel": kern.get(b["tier"]) if b["tier"] in ("t4", "tpu") else None,
-                      "default": b["id"] == DEFAULT})
+                      "default": b["id"] == default_id})
         brains.append(entry)
     return {
-        "default": DEFAULT,
+        "default": default_id,
         "t4_loaded": T4_BY_MODEL.get(loaded, loaded) if loaded else None,
         "t4_loaded_model": loaded,
         "kernels_checked": kern_at or None,
