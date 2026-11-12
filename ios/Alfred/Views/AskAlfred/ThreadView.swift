@@ -9,6 +9,10 @@ struct ThreadView: View {
 
     @State private var atBottom = true
     @State private var showVoice = false
+    /// Transcript items at or past this index arrived while the thread was
+    /// open and get a soft entrance; earlier ones (history) appear still.
+    @State private var revealFrom = Int.max
+    @State private var openedAt = Date()
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -16,12 +20,15 @@ struct ThreadView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         if model.transcript.isEmpty && model.pending.isEmpty {
-                            ButlerEmptyState(text: "Alfred is listening. Say what you need.")
+                            ButlerEmptyState(text: "At your service.",
+                                             detail: "Tell me what you need, and I shall see to it.")
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 60)
+                                .padding(.vertical, 80)
                         }
-                        ForEach(model.transcript.items) { item in
-                            ThreadItemView(item: item, isLive: model.isRunning)
+                        let items = model.transcript.items
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            ThreadItemView(item: item, isLive: model.isRunning,
+                                           reveal: index >= revealFrom && index >= items.count - 3)
                                 .id(item.id)
                         }
                         ForEach(model.pending) { p in
@@ -59,20 +66,23 @@ struct ThreadView: View {
                 .overlay(alignment: .bottom) {
                     if !atBottom {
                         Button {
-                            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                            Haptics.tap()
+                            withAnimation(AlfredMotion.spring) { proxy.scrollTo("bottom", anchor: .bottom) }
                         } label: {
-                            Image(systemName: "arrow.down")
-                                .font(.system(size: 14, weight: .semibold))
-                                .frame(width: 34, height: 34)
-                                .foregroundStyle(AlfredPalette.parchment)
-                                .background(AlfredPalette.slate.opacity(0.9), in: Circle())
-                                .overlay(Circle().strokeBorder(AlfredPalette.brass.opacity(0.3)))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(width: 36, height: 36)
+                                .foregroundStyle(AlfredPalette.brass)
+                                .background(.ultraThinMaterial, in: Circle())
+                                .overlay(Circle().strokeBorder(AlfredPalette.hairline, lineWidth: 0.75))
+                                .shadow(color: Color.black.opacity(0.35), radius: 10, x: 0, y: 4)
                         }
+                        .accessibilityLabel("Jump to latest")
                         .padding(.bottom, 10)
                         .transition(.scale.combined(with: .opacity))
                     }
                 }
-                .animation(.easeInOut(duration: 0.2), value: atBottom)
+                .animation(AlfredMotion.fade, value: atBottom)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -91,8 +101,19 @@ struct ThreadView: View {
         }
         .sensoryFeedback(.success, trigger: model.turnCompletions)
         .onAppear {
+            openedAt = Date()
+            revealFrom = model.transcript.items.count
             model.start()
             Task { await model.refreshSession() }
+        }
+        // History that streams in right after opening stays still; anything
+        // arriving later reveals itself.
+        .onChange(of: model.transcript.items.count) { _, count in
+            if Date().timeIntervalSince(openedAt) < 1.5 { revealFrom = count }
+        }
+        .onChange(of: model.session.id) { _, _ in
+            openedAt = Date()
+            revealFrom = model.transcript.items.count
         }
         .onDisappear { model.stop() }
         .onChange(of: scenePhase) { _, phase in
@@ -128,21 +149,31 @@ struct ResumeStrip: View {
         HStack(spacing: 10) {
             Image(systemName: "moon.stars").foregroundStyle(AlfredPalette.mist)
             Text("This conversation has ended.")
-                .font(AlfredFont.ui(14))
+                .font(AlfredFont.voice(15))
+                .italic()
                 .foregroundStyle(AlfredPalette.parchment)
             Spacer()
-            Button(action: action) {
-                if isResuming { ProgressView().tint(AlfredPalette.midnight) } else { Text("Wake Alfred").fontWeight(.semibold) }
+            Button {
+                Haptics.tap()
+                action()
+            } label: {
+                if isResuming {
+                    BrassDots(size: 5)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                } else {
+                    BrassCapsule(title: "Wake Alfred")
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AlfredPalette.brass)
-            .buttonBorderShape(.capsule)
-            .controlSize(.small)
+            .buttonStyle(PressableStyle())
             .disabled(isResuming)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(AlfredPalette.midnight.opacity(0.95))
+        .background(AlfredPalette.night.opacity(0.92))
+        .overlay(alignment: .top) {
+            Rectangle().fill(AlfredPalette.brass.opacity(0.15)).frame(height: 0.5)
+        }
     }
 }
 
@@ -160,7 +191,9 @@ struct TroubleStrip: View {
                 .foregroundStyle(AlfredPalette.mist)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(AlfredPalette.caution.opacity(0.15))
+        .padding(.vertical, 9)
+        .background(AlfredPalette.caution.opacity(0.16))
+        .background(AlfredPalette.night)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }

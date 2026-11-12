@@ -21,6 +21,7 @@ struct ModelsView: View {
                         .font(.footnote)
                         .foregroundStyle(AlfredPalette.caution)
                 }
+                .butlerRow()
             }
             ForEach(["proxy", "t4", "tpu"], id: \.self) { tier in
                 let rows = catalog.brains.filter { $0.tier == tier }
@@ -32,6 +33,7 @@ struct ModelsView: View {
                     } footer: {
                         Text(footer(tier, catalog: catalog))
                     }
+                    .butlerRow()
                 }
             }
             if let actionError {
@@ -40,6 +42,7 @@ struct ModelsView: View {
                         .font(.footnote)
                         .foregroundStyle(AlfredPalette.caution)
                 }
+                .butlerRow()
             }
         }
         .scrollContentBackground(.hidden)

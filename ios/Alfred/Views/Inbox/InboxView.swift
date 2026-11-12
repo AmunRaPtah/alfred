@@ -7,6 +7,7 @@ struct InboxView: View {
     @Environment(AppStore.self) private var store
     @State private var nav = Navigator.shared
     @State private var log = NotificationLog.shared
+    @State private var pendingDrafts = 0
 
     private var finished: [Session] {
         store.sessions.filter { $0.state == .exited }.sorted { $0.updatedDate > $1.updatedDate }
@@ -19,57 +20,104 @@ struct InboxView: View {
                     NavigationLink {
                         OutboxView()
                     } label: {
-                        Label("Drafts awaiting approval", systemImage: "envelope.badge")
-                            .font(AlfredFont.ui(15, weight: .medium))
-                            .foregroundStyle(AlfredPalette.parchment)
+                        HStack(spacing: 14) {
+                            ZStack {
+                                Circle().fill((pendingDrafts > 0 ? AlfredPalette.caution : AlfredPalette.brass).opacity(0.14))
+                                Image(systemName: pendingDrafts > 0 ? "envelope.badge" : "envelope")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(pendingDrafts > 0 ? AlfredPalette.caution : AlfredPalette.brass)
+                            }
+                            .frame(width: 34, height: 34)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Drafts awaiting approval")
+                                    .font(AlfredFont.voice(16, weight: .medium))
+                                    .foregroundStyle(AlfredPalette.parchment)
+                                Text(pendingDrafts == 0 ? "Nothing waiting" : pendingDrafts == 1 ? "One for your eyes" : "\(pendingDrafts) for your eyes")
+                                    .font(AlfredFont.caption)
+                                    .foregroundStyle(AlfredPalette.mist)
+                                    .contentTransition(.numericText())
+                            }
+                            Spacer(minLength: 4)
+                            if pendingDrafts > 0 {
+                                Text("\(pendingDrafts)")
+                                    .font(AlfredFont.ui(12, weight: .bold))
+                                    .foregroundStyle(AlfredPalette.midnight)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(AlfredPalette.brassGradient, in: Capsule())
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
-                    .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                    .butlerRow()
                 } header: {
-                    Text("Outbox")
+                    SectionLabel("Outbox")
                 }
                 if !log.entries.isEmpty {
-                    Section("Notifications") {
+                    Section {
                         ForEach(log.entries) { entry in
                             Button {
+                                Haptics.tap()
                                 if let sid = entry.sessionId { nav.openSession(sid) }
                             } label: {
                                 NotificationRow(entry: entry)
                             }
-                            .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                            .butlerRow()
                         }
+                    } header: {
+                        SectionLabel("Notes from Alfred")
                     }
                 }
-                Section("Finished conversations") {
+                Section {
                     if finished.isEmpty {
-                        ButlerEmptyState(text: "Nothing finished yet.")
+                        ButlerEmptyState(text: "Nothing finished yet.",
+                                         detail: "Concluded conversations will be filed here.")
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 24)
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                     } else {
                         ForEach(finished) { s in
-                            Button { nav.openSession(s.id) } label: {
+                            Button {
+                                Haptics.tap()
+                                nav.openSession(s.id)
+                            } label: {
                                 FinishedRow(session: s)
                             }
-                            .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                            .butlerRow()
                         }
                     }
+                } header: {
+                    SectionLabel("Finished conversations")
                 }
             }
             .scrollContentBackground(.hidden)
             .background(AlfredBackground())
             .listStyle(.insetGrouped)
-            .refreshable { await store.refresh() }
+            .refreshable { await reload() }
             .navigationTitle("Inbox")
             .toolbar {
                 if !log.entries.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Clear") { log.clear() }
+                        Button("Clear") {
+                            Haptics.tap()
+                            withAnimation(AlfredMotion.fade) { log.clear() }
+                        }
+                        .foregroundStyle(AlfredPalette.brass)
                     }
                 }
             }
+            .animation(AlfredMotion.spring, value: pendingDrafts)
         }
-        .task { await store.refresh() }
+        .task { await reload() }
+    }
+
+    private func reload() async {
+        if store.config.isConfigured, let items = try? await store.api.outbox(status: "pending") {
+            pendingDrafts = items.count
+        }
+        await store.refresh()
     }
 }
 
@@ -78,12 +126,16 @@ private struct NotificationRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "bell.fill")
-                .foregroundStyle(AlfredPalette.brass)
-                .frame(width: 24)
+            ZStack {
+                Circle().fill(AlfredPalette.brass.opacity(0.12))
+                Image(systemName: "bell")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AlfredPalette.brass)
+            }
+            .frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title.isEmpty ? "Alfred" : entry.title)
-                    .font(AlfredFont.ui(15, weight: .medium))
+                    .font(AlfredFont.voice(16, weight: .medium))
                     .foregroundStyle(AlfredPalette.parchment)
                 if !entry.body.isEmpty {
                     Text(entry.body)
@@ -97,7 +149,8 @@ private struct NotificationRow: View {
                 .font(AlfredFont.caption)
                 .foregroundStyle(AlfredPalette.mist)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -106,12 +159,16 @@ private struct FinishedRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "moon.zzz")
-                .foregroundStyle(AlfredPalette.mist)
-                .frame(width: 24)
+            ZStack {
+                Circle().fill(AlfredPalette.mist.opacity(0.10))
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AlfredPalette.signal)
+            }
+            .frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.displayTitle)
-                    .font(AlfredFont.ui(15, weight: .medium))
+                    .font(AlfredFont.voice(16, weight: .medium))
                     .foregroundStyle(AlfredPalette.parchment)
                     .lineLimit(1)
                 if !session.cwd.isEmpty {
@@ -126,6 +183,7 @@ private struct FinishedRow: View {
                 .font(AlfredFont.caption)
                 .foregroundStyle(AlfredPalette.mist)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 }

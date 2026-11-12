@@ -22,21 +22,28 @@ struct UserTurn: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .foregroundStyle(AlfredPalette.parchment)
-                            .background(AlfredPalette.slate.opacity(0.8), in: Capsule())
+                            .background(AlfredPalette.surface.opacity(0.85), in: Capsule())
+                            .overlay(Capsule().strokeBorder(AlfredPalette.hairline, lineWidth: 0.75))
                     }
                 }
                 if !text.isEmpty {
                     Text(InlineText.attributed(text))
                         .font(AlfredFont.body)
+                        .lineSpacing(2)
                         .foregroundStyle(AlfredPalette.parchment)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(AlfredPalette.brass.opacity(0.18))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .strokeBorder(AlfredPalette.brass.opacity(0.3), lineWidth: 1)
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 11)
+                        .background(
+                            UnevenRoundedRectangle(topLeadingRadius: 20, bottomLeadingRadius: 20,
+                                                   bottomTrailingRadius: 6, topTrailingRadius: 20, style: .continuous)
+                                .fill(LinearGradient(colors: [AlfredPalette.brass.opacity(0.20), AlfredPalette.brassDeep.opacity(0.12)],
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            UnevenRoundedRectangle(topLeadingRadius: 20, bottomLeadingRadius: 20,
+                                                   bottomTrailingRadius: 6, topTrailingRadius: 20, style: .continuous)
+                                .strokeBorder(AlfredPalette.hairline, lineWidth: 0.75)
+                        )
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -49,14 +56,16 @@ struct AlfredTurn: View {
     let text: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "suit.club.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(AlfredPalette.brass)
-                .padding(.top, 5)
+        HStack(alignment: .top, spacing: 10) {
+            ClocheMark(width: 14)
+                .padding(.top, 6)
             MarkdownView(text: text)
+                .font(AlfredFont.voice(17))
+                .lineSpacing(3)
+                .foregroundStyle(AlfredPalette.parchment)
                 .padding(.vertical, 2)
         }
+        .padding(.trailing, 8)
     }
 }
 
@@ -89,6 +98,7 @@ struct PendingTurn: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+        .alfredSlideIn()
     }
 }
 
@@ -99,7 +109,7 @@ struct ThinkingDisclosure: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                withAnimation(AlfredMotion.spring) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "ellipsis.bubble")
@@ -140,7 +150,7 @@ struct ErrandStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                withAnimation(AlfredMotion.spring) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     statusIcon
@@ -175,10 +185,10 @@ struct ErrandStep: View {
                 .padding(12)
             }
         }
-        .background(call.isError ? AlfredPalette.caution.opacity(0.12) : AlfredPalette.slate.opacity(0.5))
+        .background(call.isError ? AlfredPalette.caution.opacity(0.12) : AlfredPalette.surface.opacity(0.55))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(call.isError ? AlfredPalette.caution.opacity(0.5) : AlfredPalette.brass.opacity(0.15))
+                .strokeBorder(call.isError ? AlfredPalette.caution.opacity(0.5) : AlfredPalette.brass.opacity(0.14), lineWidth: 0.75)
         )
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
@@ -282,24 +292,33 @@ struct NoteLine: View {
 struct ThreadItemView: View {
     let item: ChatItem
     let isLive: Bool
+    /// Whether this item just arrived and should reveal itself softly.
+    /// Items already present when the thread opened appear without motion.
+    var reveal: Bool = false
 
     var body: some View {
         switch item.kind {
         case .user(let text, let attachments):
+            // The owner's words already slid in as a pending turn; the echo
+            // from the server replaces it in place without moving again.
             UserTurn(text: text, attachments: attachments)
                 .contextMenu { copyButton }
         case .assistant(let text, _):
             AlfredTurn(text: text)
                 .contextMenu { copyButton }
+                .alfredEntrance(rise: 10, enabled: reveal)
         case .thinking(let text):
             ThinkingDisclosure(text: text)
                 .contextMenu { copyButton }
+                .alfredEntrance(rise: 6, enabled: reveal)
         case .tool(let call):
             ErrandStep(call: call, isLive: isLive)
                 .contextMenu { copyButton }
+                .alfredEntrance(rise: 6, enabled: reveal)
         case .system(let s):
             NoteLine(item: s)
                 .contextMenu { copyButton }
+                .alfredEntrance(rise: 0, enabled: reveal)
         }
     }
 
@@ -311,21 +330,21 @@ struct ThreadItemView: View {
     }
 }
 
+/// Alfred is composing: three brass dots breathing, and a quiet line.
 struct ThinkingTypingIndicator: View {
-    @State private var animate = false
-
     var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(AlfredPalette.brass)
-                    .frame(width: 6, height: 6)
-                    .opacity(animate ? 1 : 0.25)
-                    .animation(.easeInOut(duration: 0.6).repeatForever().delay(Double(i) * 0.2), value: animate)
-            }
+        HStack(spacing: 10) {
+            ClocheMark(width: 14)
+                .opacity(0.8)
+            BrassDots(size: 6)
+            Text("Alfred is composing")
+                .font(AlfredFont.voice(14))
+                .italic()
+                .foregroundStyle(AlfredPalette.mist)
         }
         .padding(.vertical, 6)
-        .onAppear { animate = true }
+        .alfredEntrance(rise: 6)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Alfred is working")
     }
 }

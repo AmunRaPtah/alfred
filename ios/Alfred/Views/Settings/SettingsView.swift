@@ -68,6 +68,7 @@ struct SettingsView: View {
             } footer: {
                 Text("Over WireGuard: http://10.66.66.1:3341. Off WireGuard, use the https route plus the client certificate below. The token lives in the iOS Keychain, never on disk in plain text.")
             }
+            .butlerRow()
 
             Section {
                 if let certName {
@@ -105,13 +106,14 @@ struct SettingsView: View {
                     }
                 }
                 if let certError {
-                    Text(certError).font(.footnote).foregroundStyle(.red)
+                    Text(certError).font(.footnote).foregroundStyle(AlfredPalette.caution)
                 }
             } header: {
                 Text("Client certificate")
             } footer: {
                 Text("Required for the public https route, which rejects any device without it before alfredd is reached. Not needed over WireGuard.")
             }
+            .butlerRow()
 
             Section {
                 Button {
@@ -126,6 +128,7 @@ struct SettingsView: View {
                 .disabled(draft.baseURL == nil || isTesting)
                 ConnectionTestResult(state: test)
             }
+            .butlerRow()
 
             Section {
                 Button(isOnboarding ? "Connect" : "Save") { save() }
@@ -133,6 +136,7 @@ struct SettingsView: View {
                     .fontWeight(.semibold)
                     .disabled(!draft.isConfigured)
             }
+            .butlerRow()
 
             if !isOnboarding {
                 ModelsSection()
@@ -143,6 +147,7 @@ struct SettingsView: View {
                     LabeledContent("Version", value: Bundle.main.shortVersion)
                     LabeledContent("Protocol", value: "v1")
                 }
+                .butlerRow()
             }
         }
         .scrollContentBackground(.hidden)
@@ -212,12 +217,16 @@ struct SettingsView: View {
 private struct OnboardingHeader: View {
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "suit.club.fill")
-                .font(.system(size: 48, weight: .regular))
-                .foregroundStyle(AlfredPalette.brass)
+            ClocheMark(width: 64)
                 .padding(.top, 8)
+                .alfredEntrance(rise: 10)
             Text("Alfred")
-                .font(AlfredFont.voice(26, weight: .semibold))
+                .font(AlfredFont.title)
+                .foregroundStyle(AlfredPalette.parchment)
+            Capsule()
+                .fill(AlfredPalette.brassRule)
+                .frame(width: 56, height: 1.5)
+                .accessibilityHidden(true)
             Text("Your own conversation with the harness running on your server. Enter the alfredd URL and token. Off WireGuard, use the https URL and import your client certificate.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -245,7 +254,7 @@ private struct NotificationsSection: View {
                 LabeledContent("alfredd push", value: status.configured ? "Configured" : "Not configured")
                 LabeledContent("Devices registered", value: "\(status.devices)")
             } else if let statusError {
-                Text(statusError).font(.footnote).foregroundStyle(.red)
+                Text(statusError).font(.footnote).foregroundStyle(AlfredPalette.caution)
             } else {
                 ProgressView()
             }
@@ -270,6 +279,7 @@ private struct NotificationsSection: View {
                 Text(sendResult).font(.footnote).foregroundStyle(.secondary)
             }
         }
+        .butlerRow()
         .task {
             await push.refreshAuthorizationStatus()
             await loadStatus()
@@ -326,6 +336,7 @@ private struct VoiceSection: View {
         } footer: {
             Text("Enhanced and premium voices, where installed, are listed first.")
         }
+        .butlerRow()
     }
 
     private func voiceLabel(_ v: AVSpeechSynthesisVoice) -> String {
@@ -362,6 +373,7 @@ private struct ModelsSection: View {
         } footer: {
             Text("Start or stop the Kaggle-hosted models. Pick one per conversation from Ask Alfred's New conversation menu.")
         }
+        .butlerRow()
         .sheet(isPresented: $showModels) { ModelsSheet() }
         .task { await store.refreshBrains() }
     }
@@ -410,6 +422,7 @@ private struct ServerVoiceSection: View {
         } footer: {
             Text("Replies are spoken with the server's voice. Any sentence the server can't voice within 4 seconds is read by the on-device voice above instead.")
         }
+        .butlerRow()
         .task { await load() }
     }
 

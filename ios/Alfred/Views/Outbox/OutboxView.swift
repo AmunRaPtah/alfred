@@ -15,23 +15,24 @@ struct OutboxView: View {
     var body: some View {
         List {
             if let error {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(AlfredPalette.caution)
-                    .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                OutboxBanner(text: error, systemImage: "exclamationmark.triangle", tone: AlfredPalette.caution)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
             if let notice {
-                Text(notice)
-                    .font(.footnote)
-                    .foregroundStyle(AlfredPalette.signal)
-                    .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                OutboxBanner(text: notice, systemImage: "checkmark.seal", tone: AlfredPalette.signal)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
             if items.isEmpty {
                 Group {
                     if loaded {
-                        ButlerEmptyState(text: "No drafts awaiting approval.")
+                        ButlerEmptyState(text: "Your correspondence is in order.",
+                                         detail: "No drafts await your approval.")
                     } else {
-                        ProgressView()
+                        BrassDots(size: 6)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -43,13 +44,19 @@ struct OutboxView: View {
                     OutboxRow(item: item, busy: busyId == item.id,
                               onApprove: { confirming = item },
                               onReject: { Task { await reject(item) } })
-                        .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
+                        .transition(.opacity.combined(with: .move(edge: .leading)))
                 }
             }
         }
         .scrollContentBackground(.hidden)
         .background(AlfredBackground())
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
+        .animation(AlfredMotion.spring, value: items.map(\.id))
+        .animation(AlfredMotion.fade, value: notice)
+        .animation(AlfredMotion.fade, value: error)
         .refreshable { await load() }
         .navigationTitle("Outbox")
         .navigationBarTitleDisplayMode(.inline)
@@ -138,51 +145,98 @@ private struct OutboxRow: View {
     @State private var expanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(item.recipient.isEmpty ? "(no recipient)" : item.recipient)
-                    .font(AlfredFont.ui(13, weight: .medium))
-                    .foregroundStyle(AlfredPalette.mist)
-                    .lineLimit(1)
-                Spacer()
-                if let created = item.created {
-                    Text(RelativeTime.string(created))
+        ButlerCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text("AWAITING APPROVAL")
+                        .font(AlfredFont.label)
+                        .tracking(1.4)
+                        .foregroundStyle(AlfredPalette.caution)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(AlfredPalette.caution.opacity(0.13), in: Capsule())
+                    Spacer()
+                    if let created = item.created {
+                        Text(RelativeTime.string(created))
+                            .font(AlfredFont.caption)
+                            .foregroundStyle(AlfredPalette.mist)
+                    }
+                }
+                Text(item.subject.isEmpty ? "(no subject)" : item.subject)
+                    .font(AlfredFont.heading)
+                    .foregroundStyle(AlfredPalette.parchment)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    Text("TO")
+                        .font(AlfredFont.label)
+                        .tracking(1.2)
+                        .foregroundStyle(AlfredPalette.brass)
+                    Text(item.recipient.isEmpty ? "(no recipient)" : item.recipient)
+                        .font(AlfredFont.ui(13, weight: .medium))
+                        .foregroundStyle(AlfredPalette.mist)
+                        .lineLimit(1)
+                }
+                Rectangle().fill(AlfredPalette.brassRule).frame(height: 0.5)
+                Text(item.body)
+                    .font(AlfredFont.voice(16))
+                    .lineSpacing(2)
+                    .foregroundStyle(AlfredPalette.parchment.opacity(0.88))
+                    .lineLimit(expanded ? nil : 3)
+                    .textSelection(.enabled)
+                if !item.attachments.isEmpty {
+                    Label(item.attachments.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "),
+                          systemImage: "paperclip")
                         .font(AlfredFont.caption)
                         .foregroundStyle(AlfredPalette.mist)
                 }
-            }
-            Text(item.subject.isEmpty ? "(no subject)" : item.subject)
-                .font(AlfredFont.heading)
-                .foregroundStyle(AlfredPalette.parchment)
-            Text(item.body)
-                .font(AlfredFont.body)
-                .foregroundStyle(AlfredPalette.parchment.opacity(0.85))
-                .lineLimit(expanded ? nil : 3)
-                .textSelection(.enabled)
-            if !item.attachments.isEmpty {
-                Label(item.attachments.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "),
-                      systemImage: "paperclip")
-                    .font(AlfredFont.caption)
-                    .foregroundStyle(AlfredPalette.mist)
-            }
-            HStack(spacing: 12) {
-                Button(expanded ? "Show less" : "Show full email") {
-                    withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
-                }
-                .buttonStyle(.borderless)
-                .font(AlfredFont.caption)
-                Spacer()
-                if busy {
-                    ProgressView()
-                } else {
-                    Button("Reject", role: .destructive, action: onReject)
-                        .buttonStyle(.bordered)
-                    Button("Approve", action: onApprove)
-                        .buttonStyle(.borderedProminent)
-                        .tint(AlfredPalette.brass)
+                HStack(spacing: 10) {
+                    Button(expanded ? "Show less" : "Read in full") {
+                        withAnimation(AlfredMotion.spring) { expanded.toggle() }
+                    }
+                    .buttonStyle(.borderless)
+                    .font(AlfredFont.ui(13, weight: .medium))
+                    .foregroundStyle(AlfredPalette.brass)
+                    Spacer()
+                    if busy {
+                        BrassDots(size: 5)
+                            .padding(.vertical, 10)
+                    } else {
+                        Button(action: onReject) {
+                            QuietCapsule(title: "Reject", tint: AlfredPalette.caution)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Reject draft")
+                        Button(action: onApprove) {
+                            BrassCapsule(title: "Approve", systemImage: "paperplane")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Approve and send")
+                    }
                 }
             }
         }
-        .padding(.vertical, 4)
+    }
+}
+
+private struct OutboxBanner: View {
+    let text: String
+    let systemImage: String
+    let tone: Color
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tone)
+            Text(text)
+                .font(AlfredFont.ui(14))
+                .foregroundStyle(AlfredPalette.parchment)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(tone.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tone.opacity(0.3), lineWidth: 0.75))
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 }

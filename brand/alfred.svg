@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+<radialGradient id="bg" cx="50%" cy="30%" r="80%"><stop offset="0" stop-color="#1F2A47"/><stop offset="0.6" stop-color="#111829"/><stop offset="1" stop-color="#0A0F1C"/></radialGradient>
+<linearGradient id="brass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F3DDA6"/><stop offset="0.45" stop-color="#D4AE68"/><stop offset="1" stop-color="#9C7638"/></linearGradient>
+<linearGradient id="sheen" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.35" stop-color="#fff" stop-opacity="0.35"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<radialGradient id="halo" cx="50%" cy="55%" r="50%"><stop offset="0" stop-color="#C9A05A" stop-opacity="0.16"/><stop offset="1" stop-color="#D4AE68" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="1024" height="1024" fill="url(#bg)"/>
+<circle cx="512" cy="560" r="330" fill="url(#halo)"/>
+<!-- cloche -->
+<circle cx="512" cy="318" r="34" fill="url(#brass)"/>
+<rect x="500" y="340" width="24" height="40" rx="8" fill="url(#brass)"/>
+<path d="M232 650 C232 470 360 372 512 372 C664 372 792 470 792 650 Z" fill="url(#brass)"/>
+<path d="M300 610 C310 500 390 428 480 410" stroke="url(#sheen)" stroke-width="22" fill="none" stroke-linecap="round"/>
+<rect x="176" y="668" width="672" height="34" rx="17" fill="url(#brass)"/>
+<rect x="360" y="736" width="304" height="10" rx="5" fill="#D4AE68" opacity="0.45"/>
+</svg>

@@ -32,24 +32,15 @@ struct AlfredComposer: View {
                     Button { showPhotos = true } label: { Label("Photos", systemImage: "photo.on.rectangle") }
                     Button { showFiles = true } label: { Label("Files", systemImage: "folder") }
                 } label: {
-                    Image(systemName: "paperclip")
+                    Image(systemName: "plus")
                         .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 36, height: 36)
                         .foregroundStyle(AlfredPalette.mist)
-                        .background(AlfredPalette.slate.opacity(0.7), in: Circle())
+                        .background(AlfredPalette.surface.opacity(0.8), in: Circle())
+                        .overlay(Circle().strokeBorder(AlfredPalette.hairline, lineWidth: 0.75))
                 }
                 .disabled(model.isExited)
                 .accessibilityLabel("Attach")
-
-                Button(action: onVoice) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .foregroundStyle(AlfredPalette.mist)
-                        .background(AlfredPalette.slate.opacity(0.7), in: Circle())
-                }
-                .disabled(model.isExited)
-                .accessibilityLabel("Voice conversation")
 
                 TextField("", text: $model.draft, prompt: Text(placeholder).foregroundStyle(AlfredPalette.mist), axis: .vertical)
                     .font(AlfredFont.body)
@@ -60,20 +51,35 @@ struct AlfredComposer: View {
                     .textInputAutocapitalization(model.draft.hasPrefix("/") ? .never : .sentences)
                     .autocorrectionDisabled(model.draft.hasPrefix("/"))
                     .focused($focused)
-                    .padding(.horizontal, 14)
+                    .tint(AlfredPalette.brass)
+                    .padding(.horizontal, 15)
                     .padding(.vertical, 9)
                     .frame(minHeight: 38)
-                    .background(AlfredPalette.slate.opacity(0.7), in: RoundedRectangle(cornerRadius: 19, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(AlfredPalette.brass.opacity(0.2)))
+                    .background(AlfredPalette.night.opacity(0.85), in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 19, style: .continuous)
+                            .strokeBorder(AlfredPalette.brass.opacity(focused ? 0.45 : 0.16), lineWidth: focused ? 1 : 0.75)
+                    )
+                    .animation(AlfredMotion.fade, value: focused)
                     .disabled(model.isExited)
 
                 actionButton
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, 8)
+        .padding(.top, 10)
         .padding(.bottom, 8)
-        .background(AlfredPalette.midnight.opacity(0.9))
+        .background {
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                Rectangle().fill(AlfredPalette.midnight.opacity(0.62))
+            }
+            .ignoresSafeArea(edges: .bottom)
+        }
+        .overlay(alignment: .top) {
+            Rectangle().fill(AlfredPalette.hairline).frame(height: 0.5)
+        }
+        .environment(\.colorScheme, .dark)
         .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: 4, matching: .images)
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -113,7 +119,8 @@ struct AlfredComposer: View {
                                 .foregroundStyle(AlfredPalette.parchment)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(AlfredPalette.slate.opacity(0.8), in: Capsule())
+                                .background(AlfredPalette.surface.opacity(0.9), in: Capsule())
+                                .overlay(Capsule().strokeBorder(AlfredPalette.hairline, lineWidth: 0.75))
                         }
                         .buttonStyle(.plain)
                     }
@@ -134,8 +141,34 @@ struct AlfredComposer: View {
     private var actionButton: some View {
         HStack(spacing: 6) {
             if model.isRunning { stopButton }
-            sendButton
+            ZStack {
+                if model.canSend {
+                    sendButton
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+                } else {
+                    voiceButton
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                }
+            }
         }
+        .animation(AlfredMotion.spring, value: model.canSend)
+        .animation(AlfredMotion.spring, value: model.isRunning)
+    }
+
+    private var voiceButton: some View {
+        Button {
+            Haptics.tap()
+            onVoice()
+        } label: {
+            Image(systemName: "waveform")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 36, height: 36)
+                .foregroundStyle(AlfredPalette.brass)
+                .background(AlfredPalette.surface.opacity(0.8), in: Circle())
+                .overlay(Circle().strokeBorder(AlfredPalette.hairline, lineWidth: 0.75))
+        }
+        .disabled(model.isExited)
+        .accessibilityLabel("Voice conversation")
     }
 
     private var stopButton: some View {
@@ -143,9 +176,9 @@ struct AlfredComposer: View {
             Task { await model.interrupt() }
         } label: {
             Image(systemName: "stop.fill")
-                .font(.system(size: 13, weight: .bold))
-                .frame(width: 34, height: 34)
-                .background(AlfredPalette.caution, in: Circle())
+                .font(.system(size: 12, weight: .bold))
+                .frame(width: 36, height: 36)
+                .background(AlfredPalette.caution.opacity(0.9), in: Circle())
                 .foregroundStyle(AlfredPalette.parchment)
         }
         .accessibilityLabel("Stop")
@@ -158,9 +191,10 @@ struct AlfredComposer: View {
         } label: {
             Image(systemName: "arrow.up")
                 .font(.system(size: 15, weight: .bold))
-                .frame(width: 34, height: 34)
-                .background(model.canSend ? AlfredPalette.brass : AlfredPalette.slate.opacity(0.7), in: Circle())
-                .foregroundStyle(model.canSend ? AlfredPalette.midnight : AlfredPalette.mist)
+                .frame(width: 36, height: 36)
+                .foregroundStyle(AlfredPalette.midnight)
+                .background(AlfredPalette.brassGradient, in: Circle())
+                .shadow(color: AlfredPalette.brass.opacity(0.35), radius: 8, x: 0, y: 2)
         }
         .disabled(!model.canSend)
         .accessibilityLabel(model.isRunning ? "Add to queue" : "Send")
@@ -222,6 +256,8 @@ struct ErrandChip: View {
         .foregroundStyle(AlfredPalette.parchment)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(AlfredPalette.slate.opacity(0.8), in: Capsule())
+        .background(AlfredPalette.surface.opacity(0.9), in: Capsule())
+        .overlay(Capsule().strokeBorder(AlfredPalette.hairline, lineWidth: 0.75))
+        .transition(.scale(scale: 0.9).combined(with: .opacity))
     }
 }

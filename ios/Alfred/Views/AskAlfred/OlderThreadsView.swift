@@ -13,17 +13,21 @@ struct OlderThreadsView: View {
         NavigationStack {
             List {
                 if store.sessions.isEmpty {
-                    ButlerEmptyState(text: "No earlier conversations yet.")
+                    ButlerEmptyState(text: "No earlier conversations yet.",
+                                     detail: "When we've spoken a while, the old letters are kept here.")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 40)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                 }
                 ForEach(store.sessions) { s in
-                    Button { onSelect(s.id) } label: {
+                    Button {
+                        Haptics.tap()
+                        onSelect(s.id)
+                    } label: {
                         ThreadRow(session: s)
                     }
-                    .listRowBackground(AlfredPalette.slate.opacity(0.5))
+                    .butlerRow()
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) { pendingDelete = s } label: {
                             Label("Delete", systemImage: "trash")
@@ -61,23 +65,55 @@ private struct ThreadRow: View {
     let session: Session
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: session.state == .exited ? "moon.zzz" : "bubble.left.and.text.bubble.right")
-                .foregroundStyle(AlfredPalette.brass)
-                .frame(width: 28)
+        HStack(spacing: 14) {
+            Circle()
+                .fill(stateTone)
+                .frame(width: 7, height: 7)
+                .shadow(color: stateTone.opacity(0.6), radius: session.state == .running ? 4 : 0)
+                .frame(width: 14)
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.displayTitle)
-                    .font(AlfredFont.ui(15, weight: .medium))
+                    .font(AlfredFont.voice(16, weight: .medium))
                     .foregroundStyle(AlfredPalette.parchment)
                     .lineLimit(1)
-                Text(RelativeTime.string(session.updatedDate))
-                    .font(AlfredFont.caption)
-                    .foregroundStyle(AlfredPalette.mist)
+                HStack(spacing: 6) {
+                    Text(stateLabel.uppercased())
+                        .font(AlfredFont.label)
+                        .tracking(1.2)
+                        .foregroundStyle(stateTone)
+                    Text("\u{00B7}").foregroundStyle(AlfredPalette.mist)
+                    Text(RelativeTime.string(session.updatedDate))
+                        .font(AlfredFont.caption)
+                        .foregroundStyle(AlfredPalette.mist)
+                }
             }
             Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AlfredPalette.mist.opacity(0.6))
         }
-        .padding(.vertical, 4)
-        .opacity(session.state == .exited ? 0.7 : 1)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .opacity(session.state == .exited ? 0.72 : 1)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var stateTone: Color {
+        switch session.state {
+        case .running, .starting: return AlfredPalette.signal
+        case .idle: return AlfredPalette.brass
+        default: return AlfredPalette.mist
+        }
+    }
+
+    private var stateLabel: String {
+        switch session.state {
+        case .running: return "At work"
+        case .starting: return "Waking"
+        case .idle: return "Ready"
+        case .exited: return "Resting"
+        default: return "Unknown"
+        }
     }
 }
 

@@ -20,13 +20,26 @@ struct AskAlfredView: View {
                 if let chat {
                     ThreadView(model: chat)
                 } else if let loadError {
-                    ContentUnavailableView {
-                        Label("Alfred couldn't be reached", systemImage: "exclamationmark.bubble")
-                    } description: {
-                        Text(loadError)
+                    VStack(spacing: 22) {
+                        ButlerEmptyState(text: "I can't reach the house just now.", detail: loadError)
+                        Button {
+                            Haptics.tap()
+                            self.loadError = nil
+                            Task { await load() }
+                        } label: {
+                            BrassCapsule(title: "Try again", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(PressableStyle())
                     }
+                    .padding(.horizontal, 32)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ProgressView().tint(AlfredPalette.brass)
+                    VStack(spacing: 14) {
+                        ClocheMark(width: 44)
+                        BrassDots(size: 6)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
                 }
             }
             .background(AlfredBackground())
@@ -95,7 +108,9 @@ struct AskAlfredView: View {
             Button { showModels = true } label: { Label("Models", systemImage: "cpu") }
         } label: {
             Image(systemName: "ellipsis.circle")
+                .foregroundStyle(AlfredPalette.brass)
         }
+        .accessibilityLabel("Conversation options")
     }
 
     /// Which brain the current thread runs on; tapping it opens Models.
@@ -104,15 +119,19 @@ struct AskAlfredView: View {
         if let session = chat?.session {
             let b = store.brainCatalog.brain(session.brain)
             Button { showModels = true } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "cpu")
-                    Text(b?.short ?? session.brain ?? "Sonnet")
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(AlfredPalette.brassGradient)
+                        .frame(width: 5, height: 5)
+                    Text((b?.short ?? session.brain ?? "Sonnet").uppercased())
+                        .tracking(1.2)
                 }
-                .font(AlfredFont.caption)
+                .font(AlfredFont.label)
                 .foregroundStyle(AlfredPalette.brass)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().stroke(AlfredPalette.brass.opacity(0.5)))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(AlfredPalette.surface.opacity(0.7), in: Capsule())
+                .overlay(Capsule().strokeBorder(AlfredPalette.hairline, lineWidth: 0.75))
             }
             .accessibilityLabel("Model: \(b?.label ?? session.brain ?? "default")")
         }
