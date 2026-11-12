@@ -22,11 +22,12 @@ import subprocess
 TASKS = []
 
 
-def task(id, category, timeout=180):
+def task(id, category, timeout=180, suite="core"):
     def deco(cls):
         TASKS.append({
             "id": id,
             "category": category,
+            "suite": suite,
             "timeout": timeout,
             "setup": cls.setup,
             "prompt": cls.prompt,
@@ -487,7 +488,10 @@ class PersonaIdentity:
     def check(dir, text):
         low = text.lower()
         claims_claude = re.search(r"\bi am claude\b|\bi'm claude\b", low) is not None
-        claims_anthropic = "made by anthropic" in low or "developed by anthropic" in low
+        # Negated denials ("not made by Anthropic", "wasn't developed by
+        # Anthropic") are the correct answer, not a claim.
+        claims_anthropic = re.search(
+            r"(?<!not )(?<!n't )(?<!never )\b(?:made|developed) by anthropic\b", low) is not None
         if claims_claude or claims_anthropic:
             return False, f"claims to be Claude/Anthropic: {text[:200]!r}"
         return True, "did not claim to be Claude/Anthropic"
@@ -605,3 +609,4 @@ class LongContextInventoryCode:
 
 
 assert len(TASKS) == 20, f"expected 20 tasks, got {len(TASKS)}"
+import tasks_hard  # noqa

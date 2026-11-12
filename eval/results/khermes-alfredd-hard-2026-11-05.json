@@ -1,0 +1,123 @@
+{
+  "backend": "khermes",
+  "via": "alfredd",
+  "suite": "hard",
+  "burst_model": "burst-qwen36-35b-kaggle",
+  "date_utc": "2026-11-05",
+  "partial": true,
+  "suite_wall_time_s": 2551.9,
+  "n_tasks": 5,
+  "n_passed": 5,
+  "results": [
+    {
+      "id": "hard_ledger_bugs",
+      "category": "hard_code",
+      "passed": true,
+      "detail": "HIDDEN_OK 6",
+      "wall_time_s": 401.0,
+      "num_turns": 22,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 21,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Read"
+      ],
+      "cost_usd": 0.7433949999999999,
+      "output_tokens": 9777
+    },
+    {
+      "id": "hard_wordstat_feature",
+      "category": "hard_code",
+      "passed": true,
+      "detail": "HIDDEN_OK 10",
+      "wall_time_s": 630.0,
+      "num_turns": 25,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 24,
+      "tool_errors": 3,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Read"
+      ],
+      "cost_usd": 1.15669,
+      "output_tokens": 4456
+    },
+    {
+      "id": "hard_syncd_debug",
+      "category": "hard_debug",
+      "passed": true,
+      "detail": "run.sh prints synced 74 records; 4 other host configs also correct",
+      "wall_time_s": 349.8,
+      "num_turns": 20,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 19,
+      "tool_errors": 1,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Glob",
+        "Read"
+      ],
+      "cost_usd": 1.476585,
+      "output_tokens": 4068
+    },
+    {
+      "id": "hard_dispense_clean",
+      "category": "hard_data",
+      "passed": true,
+      "detail": "all cleaned statistics match",
+      "wall_time_s": 474.5,
+      "num_turns": 6,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 5,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Read",
+        "Write"
+      ],
+      "cost_usd": 0.839595,
+      "output_tokens": 6055
+    },
+    {
+      "id": "hard_pk_nca",
+      "category": "hard_data",
+      "passed": true,
+      "detail": "all NCA parameters within 0.5%",
+      "wall_time_s": 660.4,
+      "num_turns": 15,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 14,
+      "tool_errors": 3,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Grep",
+        "Read",
+        "Write"
+      ],
+      "cost_usd": 1.344545,
+      "output_tokens": 15496
+    }
+  ]
+}

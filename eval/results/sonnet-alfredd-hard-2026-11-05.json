@@ -1,0 +1,259 @@
+{
+  "backend": "sonnet",
+  "via": "alfredd",
+  "suite": "hard",
+  "burst_model": "sonnet",
+  "date_utc": "2026-11-05",
+  "partial": false,
+  "suite_wall_time_s": 1341.0,
+  "n_tasks": 12,
+  "n_passed": 12,
+  "results": [
+    {
+      "id": "hard_ledger_bugs",
+      "category": "hard_code",
+      "passed": true,
+      "detail": "HIDDEN_OK 6",
+      "wall_time_s": 184.1,
+      "num_turns": 27,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 26,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Read"
+      ],
+      "cost_usd": 0.951908,
+      "output_tokens": 13265
+    },
+    {
+      "id": "hard_wordstat_feature",
+      "category": "hard_code",
+      "passed": true,
+      "detail": "HIDDEN_OK 10",
+      "wall_time_s": 150.5,
+      "num_turns": 27,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 26,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Read"
+      ],
+      "cost_usd": 1.070646,
+      "output_tokens": 8663
+    },
+    {
+      "id": "hard_syncd_debug",
+      "category": "hard_debug",
+      "passed": true,
+      "detail": "run.sh prints synced 74 records; 4 other host configs also correct",
+      "wall_time_s": 93.2,
+      "num_turns": 18,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 17,
+      "tool_errors": 1,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Read"
+      ],
+      "cost_usd": 0.764176,
+      "output_tokens": 5956
+    },
+    {
+      "id": "hard_dispense_clean",
+      "category": "hard_data",
+      "passed": true,
+      "detail": "all cleaned statistics match",
+      "wall_time_s": 117.8,
+      "num_turns": 16,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 15,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash"
+      ],
+      "cost_usd": 0.6563159999999999,
+      "output_tokens": 5394
+    },
+    {
+      "id": "hard_pk_nca",
+      "category": "hard_data",
+      "passed": true,
+      "detail": "all NCA parameters within 0.5%",
+      "wall_time_s": 79.1,
+      "num_turns": 5,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash"
+      ],
+      "cost_usd": 0.21483400000000002,
+      "output_tokens": 5499
+    },
+    {
+      "id": "hard_ops_log_chain",
+      "category": "hard_long_context",
+      "passed": true,
+      "detail": "correct host and IP at incident time",
+      "wall_time_s": 71.6,
+      "num_turns": 13,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 12,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Read"
+      ],
+      "cost_usd": 0.5348379999999999,
+      "output_tokens": 3830
+    },
+    {
+      "id": "hard_invoice_policy",
+      "category": "hard_trap",
+      "passed": true,
+      "detail": "HIDDEN_OK 10",
+      "wall_time_s": 46.6,
+      "num_turns": 7,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Read",
+        "Write"
+      ],
+      "cost_usd": 0.161922,
+      "output_tokens": 1869
+    },
+    {
+      "id": "hard_stale_readme",
+      "category": "hard_trap",
+      "passed": true,
+      "detail": "all four runbook values correct",
+      "wall_time_s": 204.9,
+      "num_turns": 11,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 10,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Read"
+      ],
+      "cost_usd": 0.20347200000000001,
+      "output_tokens": 2644
+    },
+    {
+      "id": "hard_report_tool",
+      "category": "hard_debug",
+      "passed": true,
+      "detail": "report from latest revision, total 522906.16 reported",
+      "wall_time_s": 186.0,
+      "num_turns": 10,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 9,
+      "tool_errors": 1,
+      "tools_used": [
+        "Bash",
+        "Read"
+      ],
+      "cost_usd": 0.35741,
+      "output_tokens": 1964
+    },
+    {
+      "id": "hard_acct_refactor",
+      "category": "hard_code",
+      "passed": true,
+      "detail": "HIDDEN_OK 6",
+      "wall_time_s": 55.1,
+      "num_turns": 19,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 18,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Edit",
+        "Read",
+        "Write"
+      ],
+      "cost_usd": 0.589272,
+      "output_tokens": 3636
+    },
+    {
+      "id": "hard_deadline_notes",
+      "category": "hard_research",
+      "passed": true,
+      "detail": "deadline table exactly right",
+      "wall_time_s": 53.7,
+      "num_turns": 5,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "tools_used": [
+        "Bash",
+        "Write"
+      ],
+      "cost_usd": 0.188692,
+      "output_tokens": 4508
+    },
+    {
+      "id": "hard_critical_path",
+      "category": "hard_data",
+      "passed": true,
+      "detail": "schedule and critical path correct",
+      "wall_time_s": 68.6,
+      "num_turns": 7,
+      "is_error": false,
+      "timed_out": false,
+      "error": null,
+      "system_prompt_file": "alfredd",
+      "tool_calls": 6,
+      "tool_errors": 1,
+      "tools_used": [
+        "Bash",
+        "Read",
+        "Write"
+      ],
+      "cost_usd": 0.278718,
+      "output_tokens": 5336
+    }
+  ]
+}

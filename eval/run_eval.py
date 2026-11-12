@@ -2,7 +2,15 @@
 """Backend-agnostic runner for the Alfred eval suite (tasks.py).
 
 Usage:
-  run_eval.py [--backend kqwen] [--only id1,id2] [--out-prefix NAME]
+  run_eval.py [--backend kqwen] [--via cli|alfredd] [--only id1,id2] [--out-prefix NAME]
+
+--via alfredd (the default) drives each task through the live alfredd exactly
+as the phone does: POST /sessions (harness alfred, cwd = the task's scratch
+dir, ephemeral so it skips memory capture and push), poll its events until the
+turn's `usage` event, grade the last assistant message, then purge the
+session. That exercises alfred-brain, the persona + MEMORY.md prompt, the
+curated skills and the long-lived stream-json session. --via cli is the old
+path: a bare `claude-burst -p` with only alfred-system.md.
 
 Backends (see BACKENDS below): qwen122-tpu needs the Kaggle TPU session already
 serving on 127.0.0.1:8193. kqwen, kglm, kq122 run on the shared Kaggle
@@ -57,13 +65,67 @@ BACKENDS = {
 }
 
 
+# --via alfredd: eval backend name -> alfred-brain ALFRED_BRAIN value.
+ALFREDD_BRAINS = {"kbench-claude-sonnet-5": "sonnet", "sonnet": "sonnet",
+                  "qwen122-tpu": "tpu", "kglm": "kglm", "khermes": "khermes",
+                  "kqwen": "kqwen"}
+ALFREDD_URL = os.environ.get("ALFREDD_URL", "http://10.66.66.1:3341")
+
+
+def _alfredd(method, path, body=None, timeout=30):
+    import urllib.request
+    token = open(os.path.expanduser("~/.alfred/token")).read().strip()
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(ALFREDD_URL + path, data=data, method=method, headers={
+        "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"null")
+
+
+def run_via_alfredd(brain, scratch, prompt, timeout):
+    """One task as one alfredd session. Returns (text, num_turns, is_error,
+    timed_out, err, extra) where extra holds tool/cost stats."""
+    meta = _alfredd("POST", "/sessions", {"harness": "alfred", "cwd": scratch,
+                                          "permission": "bypass", "text": prompt,
+                                          "ephemeral": True, "brain": brain})
+    sid = meta["id"]
+    events, after, done = [], 0, False
+    t0 = time.time()
+    try:
+        while time.time() - t0 < timeout:
+            new = _alfredd("GET", f"/sessions/{sid}/events?after={after}&limit=1000")
+            if new:
+                events += new
+                after = new[-1].get("seq", after)
+            if any(e.get("type") == "usage" for e in new):
+                done = True
+                break
+            time.sleep(2)
+    finally:
+        try:
+            _alfredd("DELETE", f"/sessions/{sid}?purge=1")
+        except Exception:
+            pass
+    replies = [e["text"] for e in events if e.get("type") == "assistant" and e.get("text")]
+    errors = [e.get("text", "") for e in events if e.get("type") == "error"]
+    calls = [e for e in events if e.get("type") == "tool_call"]
+    tool_errors = sum(1 for e in events if e.get("type") == "tool_result" and e.get("is_error"))
+    usage = next((e for e in reversed(events) if e.get("type") == "usage"), {})
+    extra = {"tool_calls": len(calls), "tool_errors": tool_errors,
+             "tools_used": sorted({c.get("name", "?") for c in calls}),
+             "cost_usd": usage.get("cost_usd"), "output_tokens": usage.get("output_tokens")}
+    err = "; ".join(errors)[:300] or None
+    return (replies[-1] if replies else ""), len(calls) + 1, bool(errors), not done, \
+        ("timeout" if not done else err), extra
+
+
 def resolve_backend(name):
     if name in BACKENDS:
-        return dict(BACKENDS[name])
+        return dict(BACKENDS[name], name=name)
     # Raw passthrough: treat `name` as a BURST_MODEL value, no Kaggle
     # lifecycle, no system-prompt override (so another launcher's default
     # applies, e.g. a future TPU tier).
-    return {"burst_model": name, "kaggle_model": None, "sys_file": None, "kaggle": False}
+    return {"burst_model": name, "kaggle_model": None, "sys_file": None, "kaggle": False, "name": name}
 
 
 def pick_system_prompt(backend_cfg, cwd):
@@ -82,7 +144,7 @@ def pick_system_prompt(backend_cfg, cwd):
     return body, path
 
 
-def run_one_task(task, backend_cfg, timeout_override=None):
+def run_one_task(task, backend_cfg, timeout_override=None, via="alfredd"):
     tid = task["id"]
     scratch = os.path.join(SCRATCH_ROOT, tid)
     shutil.rmtree(scratch, ignore_errors=True)
@@ -90,6 +152,29 @@ def run_one_task(task, backend_cfg, timeout_override=None):
     task["setup"](scratch)
     prompt = task["prompt"](scratch)
     timeout = timeout_override or task["timeout"]
+
+    if via == "alfredd":
+        brain = ALFREDD_BRAINS.get(backend_cfg["name"])
+        if not brain:
+            raise SystemExit(f"--via alfredd: no alfred-brain mapping for backend {backend_cfg['name']!r}")
+        t0 = time.time()
+        try:
+            raw_text, num_turns, is_error, timed_out, err, extra = run_via_alfredd(
+                brain, scratch, prompt, timeout)
+        except Exception as e:
+            raw_text, num_turns, is_error, timed_out, err, extra = "", None, True, False, str(e), {}
+        wall = time.time() - t0
+        if timed_out:
+            passed, detail = False, "timed out before producing a result"
+        else:
+            try:
+                passed, detail = task["check"](scratch, strip_leaked_reasoning(raw_text))
+            except Exception as e:
+                passed, detail = False, f"checker raised: {e}"
+        return {"id": tid, "category": task["category"], "passed": bool(passed),
+                "detail": detail, "wall_time_s": round(wall, 1), "num_turns": num_turns,
+                "is_error": is_error, "timed_out": timed_out, "error": err,
+                "system_prompt_file": "alfredd", **extra}
 
     sys_prompt, sys_path = (None, None)
     picked = pick_system_prompt(backend_cfg, scratch)
@@ -161,13 +246,15 @@ def run_one_task(task, backend_cfg, timeout_override=None):
 def write_outputs(args, backend_cfg, results, suite_t0, partial=False):
     suite_wall = round(time.time() - suite_t0, 1)
     date_tag = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    prefix = args.out_prefix or args.backend
+    prefix = args.out_prefix or f"{args.backend}-{args.via}" + ("" if args.suite == "core" else f"-{args.suite}")
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
     os.makedirs(out_dir, exist_ok=True)
     out_json = os.path.join(out_dir, f"{prefix}-{date_tag}.json")
 
     summary = {
         "backend": args.backend,
+        "via": args.via,
+        "suite": args.suite,
         "burst_model": backend_cfg["burst_model"],
         "date_utc": date_tag,
         "partial": partial,
@@ -206,6 +293,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", default="kqwen")
     ap.add_argument("--only", default=None, help="comma-separated task ids")
+    ap.add_argument("--via", choices=["alfredd", "cli"], default="alfredd")
+    ap.add_argument("--suite", choices=["core", "hard", "all"], default="core")
     ap.add_argument("--out-prefix", default=None)
     args = ap.parse_args()
 
@@ -213,6 +302,8 @@ def main():
     timeout_override = int(os.environ["ALFRED_EVAL_TIMEOUT"]) if os.environ.get("ALFRED_EVAL_TIMEOUT") else None
 
     todo = tasks_mod.TASKS
+    if args.suite != "all":
+        todo = [t for t in todo if t.get("suite", "core") == args.suite]
     if args.only:
         wanted = set(args.only.split(","))
         todo = [t for t in todo if t["id"] in wanted]
@@ -222,7 +313,7 @@ def main():
     try:
         for i, task in enumerate(todo, 1):
             print(f"[{i}/{len(todo)}] {task['id']} ({task['category']}) ...", file=sys.stderr, flush=True)
-            rec = run_one_task(task, backend_cfg, timeout_override)
+            rec = run_one_task(task, backend_cfg, timeout_override, via=args.via)
             results.append(rec)
             status = "PASS" if rec["passed"] else "FAIL"
             print(f"    {status} in {rec['wall_time_s']}s turns={rec['num_turns']}: {rec['detail'][:160]}",
