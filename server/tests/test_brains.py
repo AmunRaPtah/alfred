@@ -170,7 +170,8 @@ def test_adapter_keeps_kaggle_session_on_exit():
     _, env = adapters.claude_cmd({"harness": "alfred", "permission": "bypass", "brain": "khermes"})
     assert env["ALFRED_BRAIN"] == "khermes" and env["ALFRED_BRAIN_KEEP"] == "1"
     _, env = adapters.claude_cmd({"harness": "alfred", "permission": "bypass"})
-    assert "ALFRED_BRAIN" not in env
+    # Default-brain sessions may also land on a shared Kaggle kernel.
+    assert "ALFRED_BRAIN" not in env and env["ALFRED_BRAIN_KEEP"] == "1"
 
 
 def _quota(tmp_path, gpu_left):

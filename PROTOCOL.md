@@ -36,7 +36,7 @@ cert) and the session/event/WebSocket model unchanged, except where noted.
 | POST | `/brains/{id}/start?replace=0\|1` | | `{ok, id, action:"start"\|"replace"\|"none", pid?, log?}`; runs `kaggle-glm start --wait` / `qwen122-tpu start --wait` detached, logged to `~/.alfred/brains.log`; 409 if another T4 model is up/starting and `replace` is not 1 (replace = stop it, wait for its kernel to end, then start); 400 for `sonnet`, 404 unknown |
 | POST | `/brains/{id}/stop` | | `{ok, id, action:"stop"}`; `kaggle-glm stop` / `qwen122-tpu stop` (sets the stop flag); 409 if not running |
 
-`POST /sessions` also takes `brain` (one of the `/brains` ids; omitted/null = alfred-brain's default, Sonnet; anything else is 400). It is stored in the session JSON as `brain` and becomes `ALFRED_BRAIN` for that session's alfred-brain, with `ALFRED_BRAIN_KEEP=1` so ending the chat never stops the shared Kaggle session.
+`POST /sessions` also takes `brain` (one of the `/brains` ids; omitted/null = alfred-brain's default, Sonnet; anything else is 400). It is stored in the session JSON as `brain` and becomes `ALFRED_BRAIN` for that session's alfred-brain. `ALFRED_BRAIN_KEEP=1` is always set for alfredd sessions (even default-brain ones, which may land on a Kaggle backend via `~/.alfred/default-brain`) so ending a chat never stops the shared Kaggle session; kernels are stopped via `POST /brains/{id}/stop`.
 
 `fire_at` is ISO-8601 UTC (`2026-11-05T09:00:00Z`).
 

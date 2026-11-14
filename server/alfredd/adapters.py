@@ -57,11 +57,14 @@ def claude_cmd(meta):
     if meta.get("native_session_id"):
         cmd += ["--resume", meta["native_session_id"]]
     # alfred-brain picks the model; meta["model"] is ignored. meta["brain"]
-    # (set at session creation, used by the eval) overrides its default, and
-    # keeps any Kaggle kernel running when the session ends.
+    # (set at session creation, used by the eval) overrides its default.
+    # ALFRED_BRAIN_KEEP=1 always: even a default-brain session may land on a
+    # Kaggle T4 backend (via ~/.alfred/default-brain), and its exit must not
+    # stop a kernel other chats share. Kernels stop via POST /brains/{id}/stop.
     env = _sandbox_env()
+    env["ALFRED_BRAIN_KEEP"] = "1"
     if meta.get("brain"):
-        env.update({"ALFRED_BRAIN": meta["brain"], "ALFRED_BRAIN_KEEP": "1"})
+        env["ALFRED_BRAIN"] = meta["brain"]
     return cmd, env
 
 

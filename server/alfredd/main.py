@@ -1,11 +1,13 @@
 import asyncio
 import hmac
 import json
+import logging
 import os
 import shutil
 import subprocess
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -20,7 +22,16 @@ from . import adapters, autocapture, brains, config, db, memory, outbox, push, r
 from .harnesses import get_harnesses
 from .idgen import new_id
 
-app = FastAPI()
+log = logging.getLogger("alfredd")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    on_startup()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 VALID_PERMISSIONS = {"bypass", "acceptEdits", "default", "plan"}
 VALID_BRAINS = set(brains.IDS)  # sonnet, khermes, kqwen, kglm, tpu
@@ -79,6 +90,15 @@ def _first_assistant_line(events: list) -> str:
     return ""
 
 
+def _last_error_line(events: list) -> str:
+    for ev in reversed(events):
+        if ev.get("type") == "error" and ev.get("text"):
+            line = ev["text"].strip().splitlines()[0] if ev["text"].strip() else ""
+            if line:
+                return line
+    return ""
+
+
 def _scan_for_finished_turns():
     if not config.SESSIONS_DIR.exists():
         return
@@ -87,7 +107,7 @@ def _scan_for_finished_turns():
             continue
         sid = d.name
         meta = sessionio.read_meta(sid)
-        if not meta or meta.get("state") != "idle" or meta.get("ephemeral"):
+        if not meta or meta.get("state") not in ("idle", "exited") or meta.get("ephemeral"):
             continue
         last_seq = meta.get("last_seq", 0)
         pushed_seq = meta.get("push_seq", 0)
@@ -99,19 +119,26 @@ def _scan_for_finished_turns():
             continue
         new_events = sessionio.read_events(sid, after=pushed_seq, limit=1000)
         first_line = _first_assistant_line(new_events)
+        if not first_line and meta.get("state") == "exited":
+            # A failed turn still deserves a push, but a bare exited status
+            # (e.g. the restart reconcile below) does not.
+            first_line = _last_error_line(new_events)
+            if not first_line:
+                sessionio.update_meta(sid, push_seq=last_seq)
+                continue
         sessionio.update_meta(sid, push_seq=last_seq)
         try:
             push.notify_turn_finished(meta.get("title", ""), first_line, sid)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("push for session %s failed: %s", sid, e)
 
 
 def _pusher_loop():
     while True:
         try:
             _scan_for_finished_turns()
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("pusher scan failed: %s", e)
         time.sleep(_PUSHER_INTERVAL)
 
 
@@ -121,7 +148,6 @@ def start_pusher_background():
 
 # ---------- startup ----------
 
-@app.on_event("startup")
 def on_startup():
     config.ensure_dirs()
     config.ensure_token()  # generate ~/.alfred/token if missing
@@ -209,7 +235,13 @@ async def create_session(request: Request, authorization: Optional[str] = Header
     sessionio.write_meta(sid, meta)
     config.events_path(sid).touch()
     os.mkfifo(str(config.inbox_path(sid)))
-    tmux_start_runner(sid, cwd)
+    try:
+        tmux_start_runner(sid, cwd)
+    except Exception as e:
+        # Don't leave a runnerless session behind.
+        log.warning("tmux runner for session %s failed to start: %s", sid, e)
+        shutil.rmtree(sdir, ignore_errors=True)
+        raise HTTPException(500, f"failed to start session runner: {e}")
     if text:
         ok = await asyncio.get_event_loop().run_in_executor(
             None, sessionio.write_inbox, sid, {"op": "message", "text": text,

@@ -6,6 +6,7 @@ output into Event records appended to events.jsonl, reads input from the
 session's inbox FIFO, updates meta.json, and prints a readable transcript
 to the pane.
 """
+import collections
 import json
 import os
 import signal
@@ -21,6 +22,11 @@ from alfredd.idgen import new_id  # noqa: E402
 
 SHELL_TIMEOUT = 600
 SHELL_OUTPUT_MAX = 4000
+# A turn that never produces its final (usage) record (stalled brain, or an
+# interrupt that killed the summary) is failed by the watchdog after this long.
+TURN_TIMEOUT = float(os.environ.get("ALFRED_TURN_TIMEOUT", "1800"))
+WATCHDOG_INTERVAL = 15.0
+BRAIN_TAIL_LINES = 5  # raw brain output lines kept for error context
 
 C_RESET = "\033[0m"
 C_USER = "\033[36m"
@@ -77,6 +83,9 @@ class Runner:
         self.busy = False          # a turn (or shell command) is in flight
         self.turn_text = False     # current turn produced assistant text
         self.turn_cmd = None       # slash command the current turn runs
+        self.current_item = None   # message whose turn is in flight (for requeue)
+        self.turn_started = None   # when the in-flight turn began
+        self.last_output = collections.deque(maxlen=BRAIN_TAIL_LINES)
         self.child = None
         self.child_pgid = None
         self.should_exit = threading.Event()
@@ -156,12 +165,25 @@ class Runner:
                 return None
             item = self.pending.pop(0)
             self.busy = True
+            self.current_item = item
+            self.turn_started = time.time()
             self.save_queue()
             return item
+
+    def requeue_current(self):
+        """Put the in-flight message back at the head of the queue, so a
+        resumed runner retries it instead of losing the turn."""
+        with self.cv:
+            item, self.current_item = self.current_item, None
+            if item is not None:
+                self.pending.insert(0, item)
+                self.save_queue()
 
     def turn_done(self):
         with self.cv:
             was_busy, self.busy = self.busy, False
+            self.current_item = None
+            self.turn_started = None
             self.cv.notify_all()
         if was_busy and not self.should_exit.is_set():
             self.set_state("idle")
@@ -192,6 +214,7 @@ class Runner:
             line = line.strip()
             if not line:
                 continue
+            self.last_output.append(line[:300])
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
@@ -217,10 +240,19 @@ class Runner:
         rc = child.wait()
         if child is not self.child:  # replaced by fresh_conversation()
             return
+        if rc != 0:
+            # e.g. a failed Kaggle cold start in alfred-brain. Keep the turn's
+            # message for a resumed runner and say what the brain printed.
+            self.emit({"type": "error", "text": f"brain exited with code {rc}{self._brain_tail()}"})
+            self.requeue_current()
         self.set_state("exited")
         self.emit({"type": "status", "state": "exited", "detail": f"process exited code {rc}"})
         self.should_exit.set()
         self.turn_done()
+
+    def _brain_tail(self):
+        tail = "\n".join(self.last_output)
+        return f"; last output:\n{tail}" if tail else ""
 
     def handle_internal(self, ev):
         """Adapter-only pseudo events (leading underscore) never reach
@@ -242,13 +274,33 @@ class Runner:
         return t.startswith("_")
 
     def send_long_lived(self, text, attachments):
-        if self.child is None or self.child.poll() is not None:
-            self.start_long_lived()
+        """Returns True once the message reached the brain's stdin. A broken
+        pipe (the brain died, e.g. a failed cold start) restarts the brain
+        once and retries; a second failure returns False so the caller can
+        requeue the message instead of losing it."""
         fn = adapters.agy_input_line if self.meta["harness"] == "agy" else adapters.claude_input_line
+        line = fn(text, attachments)
         self.set_state("running")
         self.turn_text = False
-        self.child.stdin.write(fn(text, attachments))
-        self.child.stdin.flush()
+        for attempt in (1, 2):
+            if self.child is None or self.child.poll() is not None:
+                self.start_long_lived()
+                self.set_state("running")
+            try:
+                self.child.stdin.write(line)
+                self.child.stdin.flush()
+                return True
+            except (BrokenPipeError, OSError, ValueError):
+                dead, self.child = self.child, None
+                rc = dead.poll()
+                if attempt == 1:
+                    # The dead brain's reader may already have marked us exiting.
+                    self.should_exit.clear()
+                    self.emit({"type": "system",
+                               "text": f"brain pipe broke (exit {rc}); restarting brain and retrying"})
+        self.emit({"type": "error",
+                   "text": f"brain did not come up; message kept in queue{self._brain_tail()}"})
+        return False
 
     def say(self, text):
         self.emit({"type": "assistant", "msg_id": f"runner-{time.time():.0f}", "text": text})
@@ -350,6 +402,36 @@ class Runner:
             except ProcessLookupError:
                 pass
 
+    # ---------------- turn watchdog ----------------
+
+    def watchdog_check(self):
+        """Fails a turn that can never finish: the brain stalled past
+        TURN_TIMEOUT, or died mid-turn without its final record. Keeps the
+        session usable instead of busy forever."""
+        with self.cv:
+            busy, started = self.busy, self.turn_started
+        if not busy or started is None:
+            return False
+        age = time.time() - started
+        child = self.child
+        dead = child is not None and child.poll() is not None
+        if age > TURN_TIMEOUT:
+            why = f"no final reply after {int(age)}s"
+        elif dead and age > 2 * WATCHDOG_INTERVAL:
+            # The reader normally ends the turn when the brain exits; this
+            # catches a turn left hanging anyway.
+            why = "brain process is gone mid-turn"
+        else:
+            return False
+        self.emit({"type": "error", "text": f"turn watchdog: {why}; marking the turn failed"})
+        self.turn_done()
+        return True
+
+    def watchdog_loop(self):
+        while not self.should_exit.is_set():
+            time.sleep(WATCHDOG_INTERVAL)
+            self.watchdog_check()
+
     # ---------------- main loop ----------------
 
     def run(self):
@@ -359,6 +441,8 @@ class Runner:
         threading.Thread(target=self.inbox_loop, daemon=True).start()
 
         long_lived = self.meta["harness"] in adapters.LONG_LIVED
+        if long_lived:
+            threading.Thread(target=self.watchdog_loop, daemon=True).start()
         try:
             while not self.should_exit.is_set():
                 item = self.next_item()
@@ -374,8 +458,14 @@ class Runner:
                     self.turn_done()
                 elif long_lived:
                     text = adapters.normalize_slash(text, self.meta)
-                    if not self.local_command(text):
-                        self.send_long_lived(text, attachments)
+                    if not self.local_command(text) and not self.send_long_lived(text, attachments):
+                        # Brain restart failed too: keep the message for a
+                        # resumed runner and end this one cleanly.
+                        self.requeue_current()
+                        self.set_state("exited")
+                        self.emit({"type": "status", "state": "exited",
+                                   "detail": "brain failed to start"})
+                        self.should_exit.set()
                 else:
                     self.send_codex(text, attachments)
                     self.turn_done()
