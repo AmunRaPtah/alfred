@@ -71,6 +71,8 @@ CATALOG = [
      "note": "Default. Best quality and fast, via the Kaggle Benchmarks proxy (daily dollar budget, no GPU quota). Always available."},
     {"id": "khermes", "label": "Qwen3.6-35B-A3B", "short": "khermes", "tier": "t4", "kaggle_model": "qwen36-35b-kaggle",
      "note": "Best T4 model (65/80 blind), uncensored, quick MoE. " + T4_COLD},
+    {"id": "kopu", "label": "Qwen3.6-35B-A3B Opus", "short": "kopu", "tier": "t4", "kaggle_model": "huihui-opus-kaggle",
+     "note": "Claude-4.7-Opus distilled + abliterated (65/80 target), same arch as khermes. " + T4_COLD},
     {"id": "kqwen", "label": "Qwen3.8-27B", "short": "kqwen", "tier": "t4", "kaggle_model": "qwen38-kaggle",
      "note": "Dense 27B (40/80 blind), slower than khermes. " + T4_COLD},
     {"id": "kglm", "label": "GLM-4.7-Flash", "short": "kglm", "tier": "t4", "kaggle_model": "glm47-kaggle",
