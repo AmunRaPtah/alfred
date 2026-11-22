@@ -49,6 +49,8 @@ case "$BACKEND" in
   kglm) KAGGLE_MODEL=glm47-kaggle; USES_KAGGLE=1 ;;
   kq122) KAGGLE_MODEL=qwen35-122b-kaggle; USES_KAGGLE=1 ;;
   khermes) KAGGLE_MODEL=qwen36-35b-kaggle; USES_KAGGLE=1 ;;
+  kopu) KAGGLE_MODEL=huihui-opus-kaggle; USES_KAGGLE=1 ;;
+  kornith) KAGGLE_MODEL=ornith-kaggle; USES_KAGGLE=1 ;;
   *) KAGGLE_MODEL=""; USES_KAGGLE=0 ;;
 esac
 
